@@ -1,0 +1,6 @@
+{
+  "name": "ClearAnEstate - Estate Cleanout Directory",
+  "description": "Directory of professional estate cleanout, senior move management, and junk removal services.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
