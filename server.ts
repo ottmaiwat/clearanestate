@@ -10,12 +10,20 @@ import { sendMail, isMailConfigured } from './mailer';
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 // Behind Passenger/nginx/a reverse proxy (as on Namecheap cPanel), the real client IP is
 // in X-Forwarded-For - trust the first hop so rate limiting keys off the actual visitor,
 // not the proxy's own address.
 app.set('trust proxy', 1);
+
+// Redirect HTTP to HTTPS (Passenger sets x-forwarded-proto header)
+app.use((req, res, next) => {
+  if (req.headers['x-forwarded-proto'] !== 'https') {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
 
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const adminPassword = process.env.ADMIN_PASSWORD;
@@ -553,7 +561,7 @@ app.get('/api/admin/pending', adminAuthLimiter, requireAdmin, async (req, res) =
     res.json((rows as any[]).map(rowToPending));
   } catch (err: any) {
     console.error('Error fetching pending submissions:', err);
-    res.status(500).json({ error: 'Failed to fetch pending submissions.' });
+    res.status(500).json({ error: 'Failed to fetch pending submissions.', details: err.message });
   }
 });
 
