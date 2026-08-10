@@ -7,6 +7,7 @@ import { ListingDetailModal } from './components/ListingDetailModal';
 import { SubmitListingModal } from './components/SubmitListingModal';
 import { GetFeaturedModal } from './components/GetFeaturedModal';
 import { AdminModal } from './components/AdminModal';
+import { AdminPage } from './components/AdminPage';
 import { ClaimModal } from './components/ClaimModal';
 import { QuoteModal } from './components/QuoteModal';
 import { Footer } from './components/Footer';
@@ -108,6 +109,9 @@ export default function App() {
 
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
 
+  // Routing - check if we're on the /admin page
+  const [isAdminPage, setIsAdminPage] = useState(() => window.location.hash === '#/admin');
+
   // Modal States
   const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
@@ -200,6 +204,32 @@ export default function App() {
         .catch((e) => console.warn('Failed to load claim requests from API', e));
     }
   }, [dbConfigured, adminPassword]);
+
+  // Handle route changes (hash-based routing)
+  useEffect(() => {
+    const handleHashChange = () => {
+      setIsAdminPage(window.location.hash === '#/admin');
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Handle admin login success - navigate to /admin
+  const handleAdminLoginSuccess = (password: string) => {
+    setAdminPassword(password);
+    sessionStorage.setItem('clearanestate_admin_password', password);
+    window.location.hash = '#/admin';
+    setIsAdminPage(true);
+  };
+
+  // Handle admin logout - navigate back to home
+  const handleAdminLogout = () => {
+    setAdminPassword(null);
+    sessionStorage.removeItem('clearanestate_admin_password');
+    window.location.hash = '';
+    setIsAdminPage(false);
+  };
 
   // Bookmark Handler
   const toggleBookmark = (id: string, e: React.MouseEvent) => {
@@ -409,6 +439,29 @@ export default function App() {
     }
     return 0;
   });
+
+  // Show admin page if on /admin route
+  if (isAdminPage) {
+    return (
+      <AdminPage
+        listings={listings}
+        pending={pending}
+        quotes={quotes}
+        claims={claims}
+        onApproveClaim={handleApproveClaim}
+        onRejectClaim={handleRejectClaim}
+        onApprovePending={handleApprovePending}
+        onRejectPending={handleRejectPending}
+        onToggleFeatured={handleToggleFeatured}
+        onDeleteListing={handleDeleteListing}
+        onResetData={resetAllData}
+        dbConfigured={dbConfigured}
+        requiresLogin={!adminPassword}
+        onLoginSuccess={handleAdminLoginSuccess}
+        onLogout={handleAdminLogout}
+      />
+    );
+  }
 
   return (
     <div className="min-h-screen bg-stone-100 dark:bg-stone-950 text-stone-900 dark:text-stone-100 font-sans selection:bg-amber-400 selection:text-stone-950 flex flex-col justify-between">
@@ -695,7 +748,7 @@ export default function App() {
 
       {/* Footer with Admin Portal Link */}
       <Footer
-        onOpenAdmin={() => setIsAdminOpen(true)}
+        onOpenAdmin={() => { window.location.hash = '#/admin'; setIsAdminPage(true); }}
         onOpenSubmitModal={() => setIsSubmitOpen(true)}
         onOpenFeaturedModal={() => { setFeaturedListingId(null); setIsFeaturedOpen(true); }}
         onOpenLegal={(tab) => setLegalModal({ open: true, tab })}
