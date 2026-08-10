@@ -246,6 +246,14 @@ export default function App() {
     setPending((prev) => [submission, ...prev]);
   };
 
+  // Reset all data to initial state
+  const resetAllData = () => {
+    setListings(INITIAL_LISTINGS);
+    setPending(INITIAL_PENDING);
+    setQuotes([]);
+    setClaims([]);
+  };
+
   // Approve Pending Submission -> move to Live Grid
   const handleApprovePending = async (submissionId: string) => {
     if (dbConfigured && adminPassword) {
