@@ -246,18 +246,6 @@ export default function App() {
     setPending((prev) => [submission, ...prev]);
   };
 
-  // Admin Login
-  const handleAdminLoginSuccess = (password: string) => {
-    setAdminPassword(password);
-    setAdminError(null);
-    sessionStorage.setItem('clearanestate_admin_password', password);
-  };
-
-  const handleAdminLogout = () => {
-    setAdminPassword(null);
-    sessionStorage.removeItem('clearanestate_admin_password');
-  };
-
   // Approve Pending Submission -> move to Live Grid
   const handleApprovePending = async (submissionId: string) => {
     if (dbConfigured && adminPassword) {
