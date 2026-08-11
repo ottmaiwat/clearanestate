@@ -18,8 +18,9 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 app.set('trust proxy', 1);
 
 // Redirect HTTP to HTTPS (Passenger sets x-forwarded-proto header)
+// Redirect HTTP to HTTPS only if not already HTTPS
 app.use((req, res, next) => {
-  if (req.headers['x-forwarded-proto'] !== 'https') {
+  if (req.headers['x-forwarded-proto'] === 'http' && process.env.NODE_ENV === 'production') {
     return res.redirect(301, `https://${req.headers.host}${req.url}`);
   }
   next();
