@@ -17,13 +17,7 @@ const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 // not the proxy's own address.
 app.set('trust proxy', 1);
 
-// Redirect HTTP to HTTPS (Passenger sets x-forwarded-proto header)
-app.use((req, res, next) => {
-  if (req.headers['x-forwarded-proto'] !== 'https') {
-    return res.redirect(301, `https://${req.headers.host}${req.url}`);
-  }
-  next();
-});
+// SSL/HTTPS is handled by cPanel/Apache reverse proxy, so we don't force it in Express
 
 function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
   const adminPassword = process.env.ADMIN_PASSWORD;
