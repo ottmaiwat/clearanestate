@@ -39,15 +39,21 @@ function isDbConfigured() {
 function getPool() {
   if (!isDbConfigured()) return null;
   if (!pool) {
-    pool = import_promise.default.createPool({
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+    const socketPath = process.env.DB_SOCKET || (process.env.DB_HOST?.startsWith("/") ? process.env.DB_HOST : null);
+    const config = {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
       waitForConnections: true,
       connectionLimit: 5
-    });
+    };
+    if (socketPath) {
+      config.socketPath = socketPath;
+    } else {
+      config.host = process.env.DB_HOST;
+      config.port = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
+    }
+    pool = import_promise.default.createPool(config);
   }
   return pool;
 }
@@ -175,8 +181,14 @@ async function sendMail(opts) {
 // server.ts
 import_dotenv.default.config();
 var app = (0, import_express.default)();
-var PORT = 3e3;
+var PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
 app.set("trust proxy", 1);
+app.use((req, res, next) => {
+  if (req.headers["x-forwarded-proto"] !== "https") {
+    return res.redirect(301, `https://${req.headers.host}${req.url}`);
+  }
+  next();
+});
 function requireAdmin(req, res, next) {
   const adminPassword = process.env.ADMIN_PASSWORD;
   if (!adminPassword) {
@@ -637,7 +649,7 @@ app.get("/api/admin/pending", adminAuthLimiter, requireAdmin, async (req, res) =
     res.json(rows.map(rowToPending));
   } catch (err) {
     console.error("Error fetching pending submissions:", err);
-    res.status(500).json({ error: "Failed to fetch pending submissions." });
+    res.status(500).json({ error: "Failed to fetch pending submissions.", details: err.message });
   }
 });
 app.post("/api/admin/pending/:id/approve", adminAuthLimiter, requireAdmin, async (req, res) => {
