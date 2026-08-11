@@ -10,15 +10,26 @@ export function isDbConfigured(): boolean {
 export function getPool(): mysql.Pool | null {
   if (!isDbConfigured()) return null;
   if (!pool) {
-    pool = mysql.createPool({
-      host: process.env.DB_HOST,
-      port: process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306,
+    // Support both TCP (host:port) and Unix socket connections
+    // If DB_HOST starts with "/" it's treated as a socket path, or use DB_SOCKET if provided
+    const socketPath = process.env.DB_SOCKET || (process.env.DB_HOST?.startsWith('/') ? process.env.DB_HOST : null);
+
+    const config: any = {
       user: process.env.DB_USER,
       password: process.env.DB_PASSWORD,
       database: process.env.DB_NAME,
       waitForConnections: true,
       connectionLimit: 5,
-    });
+    };
+
+    if (socketPath) {
+      config.socketPath = socketPath;
+    } else {
+      config.host = process.env.DB_HOST;
+      config.port = process.env.DB_PORT ? Number(process.env.DB_PORT) : 3306;
+    }
+
+    pool = mysql.createPool(config);
   }
   return pool;
 }
