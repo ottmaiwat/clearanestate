@@ -95,6 +95,25 @@ Before calling it launched, actually click through each flow on `https://yourdom
 - [ ] Log into the Admin Portal with your real password → confirm it works and that 10 wrong attempts locks you out temporarily
 - [ ] Check the Legal page loads with your real business details, not placeholders
 
+### 10. Rotate sensitive credentials (SECURITY)
+
+The following credentials were handled during initial setup and support sessions and should be rotated before declaring the site fully secure:
+
+**Rotate these immediately (or ASAP):**
+- `ADMIN_PASSWORD` — Create a new, stronger password in cPanel's Environment Variables
+- `DB_PASSWORD` — Create a new database user with a new password in MySQL, update cPanel env vars, and delete the old user
+- `SMTP_PASSWORD` — Reset the mailbox password in cPanel's Email Accounts and update env vars
+- `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` — Revoke the old key in Stripe Dashboard, create a new one, and update env vars
+
+**Why:** These were shared in screenshots with Namecheap support, passed in chat transcripts, and handled repeatedly during troubleshooting. Best practice: assume any credential that's left a secure environment should be rotated.
+
+**How:**
+1. Generate new passwords/keys for each service
+2. Update them in cPanel's **Environment Variables** section for your Node.js App
+3. Click **Restart App** to pick up the changes
+4. In the relevant service UIs (Stripe, cPanel Email/MySQL), disable or delete the old credentials
+5. Test: verify the app still works with the new credentials
+
 ## Architecture notes
 
 - Backend: Express (`server.ts`) + MySQL (`db.ts`, lazy pool, auto-creates tables) + SMTP (`mailer.ts`, nodemailer). All optional — the whole app gracefully falls back to the original localStorage/seed-data demo behavior if no database is configured, so local dev without MySQL still works.
