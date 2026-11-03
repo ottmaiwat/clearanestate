@@ -251,6 +251,19 @@ function listingPath(listing) {
   return `/listings/${listing.id}/${listingSlug(listing)}`;
 }
 
+// src/lib/site.ts
+var SITE_URL = "https://clearanestate.com";
+
+// src/lib/badge.ts
+function badgeImagePath(featured) {
+  return featured ? "/badge-featured.svg" : "/badge.svg";
+}
+function badgeHtml(listing) {
+  const featured = !!listing.featured;
+  const label = featured ? "Featured on ClearAnEstate" : "Listed on ClearAnEstate";
+  return `<a href="${SITE_URL}${listingPath(listing)}" target="_blank" rel="noopener"><img src="${SITE_URL}${badgeImagePath(featured)}" alt="${label}" width="224" height="64" style="border:0"></a>`;
+}
+
 // src/lib/locations.ts
 var US_STATES = {
   AL: "Alabama",
@@ -394,7 +407,7 @@ function dollars(cents) {
 import_dotenv.default.config();
 var app = (0, import_express.default)();
 var PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3e3;
-var SITE_URL = (process.env.APP_URL || "https://clearanestate.com").replace(/\/$/, "");
+var SITE_URL2 = (process.env.APP_URL || "https://clearanestate.com").replace(/\/$/, "");
 app.set("trust proxy", 1);
 function requireAdmin(req, res, next) {
   const adminPassword = process.env.ADMIN_PASSWORD;
@@ -541,7 +554,7 @@ app.post("/api/stripe/create-checkout-session", async (req, res) => {
       });
     }
     const { priceCents } = await currentPricing();
-    const origin = process.env.APP_URL ? SITE_URL : req.headers.origin || "http://localhost:3000";
+    const origin = process.env.APP_URL ? SITE_URL2 : req.headers.origin || "http://localhost:3000";
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
       line_items: [
@@ -722,18 +735,18 @@ app.get("/api/listings", async (req, res) => {
 app.get("/sitemap.xml", async (req, res) => {
   res.type("application/xml");
   res.set("Cache-Control", "public, max-age=3600");
-  const urls = [{ loc: `${SITE_URL}/` }, { loc: `${SITE_URL}/advertise` }];
+  const urls = [{ loc: `${SITE_URL2}/` }, { loc: `${SITE_URL2}/advertise` }];
   const db = getPool();
   if (db) {
     try {
       await ensureSchema();
       const [rows] = await db.query("SELECT id, name, city, state, category, created_at FROM listings");
       for (const landing of landingPaths(rows)) {
-        urls.push({ loc: `${SITE_URL}${landing}` });
+        urls.push({ loc: `${SITE_URL2}${landing}` });
       }
       for (const row of rows) {
         urls.push({
-          loc: `${SITE_URL}${listingPath(row)}`,
+          loc: `${SITE_URL2}${listingPath(row)}`,
           lastmod: row.created_at instanceof Date ? row.created_at.toISOString().split("T")[0] : String(row.created_at).split("T")[0]
         });
       }
@@ -759,7 +772,7 @@ app.get("/robots.txt", (req, res) => {
 Allow: /
 Disallow: /api/
 
-Sitemap: ${SITE_URL}/sitemap.xml
+Sitemap: ${SITE_URL2}/sitemap.xml
 `);
 });
 var TRACK_EVENT_TYPES = /* @__PURE__ */ new Set(["page_view", "listing_view", "call", "website", "directions"]);
@@ -970,6 +983,38 @@ function extractDomain(value) {
     return null;
   }
 }
+async function emailClaimApproved(claimantName, claimantEmail, listingRow) {
+  const listing = rowToListing(listingRow);
+  const lines = [
+    `Hi ${claimantName},`,
+    "",
+    `Your claim of "${listing.name}" on ClearAnEstate.com is approved. Your listing:`,
+    `${SITE_URL2}${listingPath(listing)}`
+  ];
+  if (!listing.featured) {
+    const pricing = await currentPricing();
+    const taken = await cityFeaturedCount(listing.city, listing.state);
+    const left = Math.max(0, CITY_CAP - taken);
+    lines.push(
+      "",
+      `GET TO THE TOP OF ${listing.city.toUpperCase()}'S PAGE`,
+      `Featured listings show first, with Call, Website and Directions buttons on the card. ${dollars(pricing.priceCents)}/year, price locked while you stay. ${left} of ${CITY_CAP} featured spots are left in ${listing.city}.`,
+      `${SITE_URL2}/advertise?listing=${encodeURIComponent(listing.id)}`
+    );
+  }
+  lines.push(
+    "",
+    "ADD OUR BADGE TO YOUR WEBSITE",
+    "Paste this code into your website (footer or About page). It shows customers you are listed and links to your listing:",
+    "",
+    badgeHtml(listing),
+    "",
+    `Questions? Just reply to this email.`,
+    "",
+    "ClearAnEstate.com"
+  );
+  await sendMail({ to: claimantEmail, subject: `Your claim of ${listing.name} is approved`, text: lines.join("\n") });
+}
 app.post("/api/listings/:id/claim", submissionLimiter, async (req, res) => {
   const db = getPool();
   if (!db) return res.status(503).json({ error: "Database is not configured on server." });
@@ -998,6 +1043,9 @@ app.post("/api/listings/:id/claim", submissionLimiter, async (req, res) => {
     );
     if (autoApproved) {
       await db.query("UPDATE listings SET claimed = TRUE WHERE id = ?", [req.params.id]);
+      emailClaimApproved(claimantName, claimantEmail, { ...listing, claimed: true }).catch(
+        (err) => console.error("Failed to email claim approval:", err)
+      );
     } else {
       notifyAdmin(
         `Claim Request Needs Review: ${listing.name}`,
@@ -1349,6 +1397,13 @@ app.post("/api/admin/claims/:id/approve", adminAuthLimiter, requireAdmin, async 
     if (!claim) return res.status(404).json({ error: "Claim request not found." });
     await db.query("UPDATE listings SET claimed = TRUE WHERE id = ?", [claim.listing_id]);
     await db.query("UPDATE claim_requests SET status = 'approved' WHERE id = ?", [req.params.id]);
+    const [listingRows] = await db.query("SELECT * FROM listings WHERE id = ?", [claim.listing_id]);
+    const listingRow = listingRows[0];
+    if (listingRow) {
+      emailClaimApproved(claim.claimant_name, claim.claimant_email, listingRow).catch(
+        (err) => console.error("Failed to email claim approval:", err)
+      );
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error("Error approving claim request:", err);
@@ -1385,10 +1440,10 @@ function escapeHtml(s) {
 function applyMeta(html, meta) {
   const title = escapeHtml(meta.title);
   const description = escapeHtml(meta.description);
-  const extra = meta.notFound ? '<meta name="robots" content="noindex" />' : `<link rel="canonical" href="${escapeHtml(SITE_URL + meta.canonicalPath)}" />
+  const extra = meta.notFound ? '<meta name="robots" content="noindex" />' : `<link rel="canonical" href="${escapeHtml(SITE_URL2 + meta.canonicalPath)}" />
     <meta property="og:title" content="${title}" />
     <meta property="og:description" content="${description}" />
-    <meta property="og:url" content="${escapeHtml(SITE_URL + meta.canonicalPath)}" />`;
+    <meta property="og:url" content="${escapeHtml(SITE_URL2 + meta.canonicalPath)}" />`;
   return html.replace(/<title>[^<]*<\/title>/, `<title>${title}</title>
     ${extra}`).replace(/<meta name="description" content="[^"]*"\s*\/?>/, `<meta name="description" content="${description}" />`);
 }

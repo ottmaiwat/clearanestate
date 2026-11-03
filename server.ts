@@ -9,6 +9,7 @@ import rateLimit from 'express-rate-limit';
 import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, sendTestMail, isMailConfigured } from './mailer';
 import { listingPath } from './src/lib/slug';
+import { badgeHtml } from './src/lib/badge';
 import { landingPaths, parseLandingPath, citySlug, landingTitle, landingDescription } from './src/lib/locations';
 import { pricingFor, dollars, CITY_CAP } from './src/lib/pricing';
 
@@ -725,6 +726,44 @@ function extractDomain(value: string | null | undefined): string | null {
   }
 }
 
+// Tell the owner their claim went through, with the two next steps: get featured (if
+// they aren't already) and add our badge to their website. Best-effort, never blocks.
+async function emailClaimApproved(claimantName: string, claimantEmail: string, listingRow: any): Promise<void> {
+  const listing = rowToListing(listingRow);
+  const lines = [
+    `Hi ${claimantName},`,
+    '',
+    `Your claim of "${listing.name}" on ClearAnEstate.com is approved. Your listing:`,
+    `${SITE_URL}${listingPath(listing)}`,
+  ];
+
+  if (!listing.featured) {
+    const pricing = await currentPricing();
+    const taken = await cityFeaturedCount(listing.city, listing.state);
+    const left = Math.max(0, CITY_CAP - taken);
+    lines.push(
+      '',
+      `GET TO THE TOP OF ${listing.city.toUpperCase()}'S PAGE`,
+      `Featured listings show first, with Call, Website and Directions buttons on the card. ${dollars(pricing.priceCents)}/year, price locked while you stay. ${left} of ${CITY_CAP} featured spots are left in ${listing.city}.`,
+      `${SITE_URL}/advertise?listing=${encodeURIComponent(listing.id)}`
+    );
+  }
+
+  lines.push(
+    '',
+    'ADD OUR BADGE TO YOUR WEBSITE',
+    'Paste this code into your website (footer or About page). It shows customers you are listed and links to your listing:',
+    '',
+    badgeHtml(listing),
+    '',
+    `Questions? Just reply to this email.`,
+    '',
+    'ClearAnEstate.com'
+  );
+
+  await sendMail({ to: claimantEmail, subject: `Your claim of ${listing.name} is approved`, text: lines.join('\n') });
+}
+
 // Public: claim ownership of a listing. If the claimant's email domain matches the
 // listing's own website/email domain, we treat that as reasonable proof of ownership and
 // approve immediately. Otherwise it's queued for manual admin review, same as new listings.
@@ -764,6 +803,9 @@ app.post('/api/listings/:id/claim', submissionLimiter, async (req, res) => {
 
     if (autoApproved) {
       await db.query('UPDATE listings SET claimed = TRUE WHERE id = ?', [req.params.id]);
+      emailClaimApproved(claimantName, claimantEmail, { ...listing, claimed: true }).catch((err) =>
+        console.error('Failed to email claim approval:', err)
+      );
     } else {
       notifyAdmin(
         `Claim Request Needs Review: ${listing.name}`,
@@ -1188,6 +1230,14 @@ app.post('/api/admin/claims/:id/approve', adminAuthLimiter, requireAdmin, async 
 
     await db.query('UPDATE listings SET claimed = TRUE WHERE id = ?', [claim.listing_id]);
     await db.query("UPDATE claim_requests SET status = 'approved' WHERE id = ?", [req.params.id]);
+
+    const [listingRows] = await db.query('SELECT * FROM listings WHERE id = ?', [claim.listing_id]);
+    const listingRow = (listingRows as any[])[0];
+    if (listingRow) {
+      emailClaimApproved(claim.claimant_name, claim.claimant_email, listingRow).catch((err) =>
+        console.error('Failed to email claim approval:', err)
+      );
+    }
 
     res.json({ ok: true });
   } catch (err: any) {

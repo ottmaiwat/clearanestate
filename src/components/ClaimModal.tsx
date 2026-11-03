@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Listing } from '../types';
-import { X, UserCheck, Send, CheckCircle2, ShieldCheck, Mail, Phone, Building, Clock, AlertTriangle } from 'lucide-react';
+import { X, UserCheck, Send, CheckCircle2, ShieldCheck, Mail, Phone, Building, Clock, AlertTriangle, Sparkles, ArrowRight } from 'lucide-react';
 import { motion } from 'motion/react';
-import { submitClaimRequest } from '../lib/api';
+import { submitClaimRequest, fetchPricing, PricingInfo } from '../lib/api';
+import { dollars } from '../lib/pricing';
+import { BadgeCode } from './BadgeCode';
 import { HoneypotField } from './HoneypotField';
 
 interface ClaimModalProps {
@@ -24,6 +27,15 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [claimStatus, setClaimStatus] = useState<'approved' | 'pending' | 'demo-only'>('pending');
   const [hp, setHp] = useState('');
+  const [pricing, setPricing] = useState<PricingInfo | null>(null);
+  const navigate = useNavigate();
+
+  // Once the claim is in, look up the featured price and how many spots are left in the
+  // business's city, so the next step can be the featured checkout.
+  useEffect(() => {
+    if (!submitted || !listing || listing.featured) return;
+    fetchPricing(listing.id).then(setPricing).catch(() => {});
+  }, [submitted, listing]);
 
   if (!listing) return null;
 
@@ -63,6 +75,7 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({
     setOwnerEmail('');
     setOwnerPhone('');
     setProofDetails('');
+    setPricing(null);
     onClose();
   };
 
@@ -127,12 +140,42 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({
                 </span>
               </div>
             )}
+            {/* Next step: get featured. Featuring doesn't wait on claim review, so it's offered either way. */}
+            {!listing.featured && (
+              <div className="text-left bg-amber-100/70 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-2xl p-4 space-y-2" id="claim-feature-offer">
+                <p className="text-sm font-bold flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-amber-600" />
+                  Get to the top of {listing.city}&rsquo;s page
+                </p>
+                <p className="text-xs text-stone-700 dark:text-stone-300">
+                  Featured listings show first, with Call, Website and Directions buttons right on the card.
+                  {pricing && <> {dollars(pricing.priceCents)}/year, price locked while you stay.</>}
+                  {pricing?.city && (
+                    <strong> {Math.max(0, pricing.cityCap - pricing.city.taken)} of {pricing.cityCap} spots left in {pricing.city.name}.</strong>
+                  )}
+                </p>
+                <button
+                  onClick={() => {
+                    handleClose();
+                    navigate(`/advertise?listing=${encodeURIComponent(listing.id)}`);
+                  }}
+                  className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-stone-950 transition-colors shadow-xs"
+                  id="claim-get-featured-btn"
+                >
+                  Feature {listing.name}
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
+
+            {claimStatus !== 'pending' && <BadgeCode listing={listing} />}
+
             <button
               onClick={handleClose}
-              className="px-6 py-2 rounded-xl text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+              className="px-6 py-2 rounded-xl text-xs font-bold bg-stone-200 dark:bg-stone-800 text-stone-700 dark:text-stone-200 hover:bg-stone-300 dark:hover:bg-stone-700 transition-colors"
               id="claim-done-btn"
             >
-              Done
+              {listing.featured ? 'Done' : 'Maybe later'}
             </button>
           </div>
         ) : (

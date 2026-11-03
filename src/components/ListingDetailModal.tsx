@@ -20,6 +20,7 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { BadgeCode } from './BadgeCode';
 
 interface ListingDetailModalProps {
   listing: Listing | null;
@@ -38,8 +39,10 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
 }) => {
   // The page title/description for an open listing is set by App (see pageMeta there).
   const listingId = listing?.id;
+  const [showBadge, setShowBadge] = useState(false);
   useEffect(() => {
     if (listingId) trackEvent('listing_view', listingId);
+    setShowBadge(false);
   }, [listingId]);
 
   if (!listing) return null;
@@ -273,6 +276,12 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
             )}
           </div>
 
+          {showBadge && (
+            <div className="px-6 pb-4">
+              <BadgeCode listing={listing} />
+            </div>
+          )}
+
           {/* Modal Action Footer */}
           <div className="p-4 bg-stone-100 dark:bg-stone-800/90 border-t border-stone-200 dark:border-stone-700 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
@@ -284,6 +293,17 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <UserCheck className="w-3.5 h-3.5" />
                 {listing.claimed ? 'Claimed Business Owner' : 'Is this your business? Claim it free'}
               </button>
+
+              {listing.claimed && (
+                <button
+                  onClick={() => setShowBadge((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-stone-600 dark:text-stone-300 hover:text-amber-600 dark:hover:text-amber-400 underline underline-offset-2"
+                  id="show-badge-link"
+                >
+                  <Award className="w-3.5 h-3.5" />
+                  {showBadge ? 'Hide website badge' : 'Get a website badge'}
+                </button>
+              )}
 
               {!listing.featured && (
                 <button
