@@ -1,8 +1,15 @@
 import React from 'react';
 import { Listing } from '../types';
 import { trackEvent } from '../lib/api';
-import { Phone, Globe, MapPin, Star, ShieldCheck, Sparkles, ArrowRight, Bookmark } from 'lucide-react';
+import { Phone, Globe, MapPin, Star, ShieldCheck, Sparkles, ArrowRight, Bookmark, Navigation } from 'lucide-react';
 import { motion } from 'motion/react';
+
+// Google Maps search: the street address when we have one, otherwise the business name and
+// city, which usually lands on the business's own Maps pin.
+function directionsUrl(listing: Listing): string {
+  const query = listing.address ? `${listing.name}, ${listing.address}` : `${listing.name}, ${listing.city}, ${listing.state}`;
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
 
 interface PriceTagCardProps {
   listing: Listing;
@@ -19,6 +26,16 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
   isBookmarked,
   onToggleBookmark,
 }) => {
+  // Featured (paid) cards get more on the card itself: description, trust badges, more
+  // services and a full Call / Website / Directions row. Free cards stay compact.
+  const featured = listing.featured;
+  const serviceLimit = featured ? 6 : 3;
+  const trustBadges = [
+    listing.insured && 'Insured',
+    listing.bonded && 'Bonded',
+    listing.yearsInBusiness && `${listing.yearsInBusiness}+ yrs`,
+  ].filter(Boolean) as string[];
+
   return (
     <motion.div
       layout
@@ -29,10 +46,10 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
       transition={{ duration: 0.25 }}
       id={`listing-card-${listing.id}`}
       onClick={() => onSelect(listing)}
-      className={`group relative bg-amber-50/40 dark:bg-stone-900 border-2 rounded-2xl p-5 shadow-sm hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between overflow-hidden ${
-        listing.featured
-          ? 'border-amber-400 dark:border-amber-500/60 ring-2 ring-amber-400/20 shadow-amber-500/10'
-          : 'border-stone-200 dark:border-stone-800 hover:border-amber-300 dark:hover:border-amber-700'
+      className={`group relative border-2 rounded-2xl p-5 shadow-sm hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between overflow-hidden ${
+        featured
+          ? 'bg-gradient-to-b from-amber-100/80 to-amber-50/60 dark:from-amber-950/40 dark:to-stone-900 border-amber-400 dark:border-amber-500/60 ring-2 ring-amber-400/20 shadow-amber-500/10'
+          : 'bg-amber-50/40 dark:bg-stone-900 border-stone-200 dark:border-stone-800 hover:border-amber-300 dark:hover:border-amber-700'
       }`}
     >
       {/* Top Tag Hole & String Graphic */}
@@ -97,9 +114,27 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
           <div className="absolute -right-6 -top-2.5 w-4 h-5 bg-stone-100 dark:bg-stone-950 rounded-l-full" />
         </div>
 
+        {/* Featured: what they do and why to trust them, right on the card */}
+        {featured && listing.description && !/not yet claimed/i.test(listing.description) && (
+          <p className="text-xs text-stone-700 dark:text-stone-300 line-clamp-2 mb-3">{listing.description}</p>
+        )}
+        {featured && trustBadges.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {trustBadges.map((badge) => (
+              <span
+                key={badge}
+                className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-50 text-green-800 border border-green-200 dark:bg-green-950/40 dark:text-green-300 dark:border-green-900"
+              >
+                <ShieldCheck className="w-3 h-3" />
+                {badge}
+              </span>
+            ))}
+          </div>
+        )}
+
         {/* Service Highlights */}
         <div className="flex flex-wrap gap-1.5 mb-4">
-          {listing.services.slice(0, 3).map((srv, idx) => (
+          {listing.services.slice(0, serviceLimit).map((srv, idx) => (
             <span
               key={idx}
               className="text-[11px] font-sans px-2 py-0.5 rounded bg-amber-100/60 dark:bg-stone-800/80 text-amber-900 dark:text-amber-200"
@@ -107,9 +142,9 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
               • {srv}
             </span>
           ))}
-          {listing.services.length > 3 && (
+          {listing.services.length > serviceLimit && (
             <span className="text-[11px] font-sans px-1.5 py-0.5 text-stone-500 dark:text-stone-400">
-              +{listing.services.length - 3} more
+              +{listing.services.length - serviceLimit} more
             </span>
           )}
         </div>
@@ -136,6 +171,53 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
           </div>
         </div>
 
+        {featured ? (
+          <div className="grid grid-cols-3 gap-1.5">
+            {listing.phone && (
+              <a
+                href={`tel:${listing.phone.replace(/[^\d+]/g, '')}`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  trackEvent('call', listing.id);
+                }}
+                className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-bold bg-amber-500 hover:bg-amber-600 text-stone-950 transition-colors shadow-xs"
+                title={`Call ${listing.phone}`}
+                id={`call-btn-${listing.id}`}
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span>Call</span>
+              </a>
+            )}
+            <a
+              href={listing.website}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.stopPropagation();
+                trackEvent('website', listing.id);
+              }}
+              className={`inline-flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-bold bg-stone-900 hover:bg-stone-700 text-stone-50 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-white transition-colors shadow-xs ${listing.phone ? '' : 'col-span-2'}`}
+              id={`website-btn-${listing.id}`}
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>Website</span>
+            </a>
+            <a
+              href={directionsUrl(listing)}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                e.stopPropagation();
+                trackEvent('directions', listing.id);
+              }}
+              className="inline-flex items-center justify-center gap-1 px-2 py-2 rounded-lg text-xs font-bold border border-stone-300 dark:border-stone-600 text-stone-800 dark:text-stone-200 hover:bg-amber-50 dark:hover:bg-stone-800 transition-colors"
+              id={`directions-btn-${listing.id}`}
+            >
+              <Navigation className="w-3.5 h-3.5" />
+              <span>Directions</span>
+            </a>
+          </div>
+        ) : (
         <div className="flex items-center justify-between gap-2">
           {listing.phone ? (
             <a
@@ -179,6 +261,7 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
             <ArrowRight className="w-4 h-4" />
           </button>
         </div>
+        )}
       </div>
     </motion.div>
   );

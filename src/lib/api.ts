@@ -206,7 +206,7 @@ export async function fetchSubscriptionsAdmin(password: string): Promise<Subscri
   return parseJsonOrThrow(res);
 }
 
-export type TrackEventType = 'page_view' | 'listing_view' | 'call' | 'website';
+export type TrackEventType = 'page_view' | 'listing_view' | 'call' | 'website' | 'directions';
 
 // Fire-and-forget traffic event. sendBeacon survives the page unloading (a tel: link or a
 // website click often navigates away immediately), and falls back to a keepalive fetch.

@@ -492,7 +492,7 @@ app.get('/robots.txt', (req, res) => {
 
 // ---- First-party traffic tracking ----
 
-const TRACK_EVENT_TYPES = new Set(['page_view', 'listing_view', 'call', 'website']);
+const TRACK_EVENT_TYPES = new Set(['page_view', 'listing_view', 'call', 'website', 'directions']);
 const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|headless|lighthouse|pingdom|uptime/i;
 
 // Generous per-IP cap - real visitors fire a handful of events per page, so this only

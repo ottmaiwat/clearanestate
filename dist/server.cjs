@@ -762,7 +762,7 @@ Disallow: /api/
 Sitemap: ${SITE_URL}/sitemap.xml
 `);
 });
-var TRACK_EVENT_TYPES = /* @__PURE__ */ new Set(["page_view", "listing_view", "call", "website"]);
+var TRACK_EVENT_TYPES = /* @__PURE__ */ new Set(["page_view", "listing_view", "call", "website", "directions"]);
 var BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|headless|lighthouse|pingdom|uptime/i;
 var trackLimiter = (0, import_express_rate_limit.default)({
   windowMs: 60 * 1e3,
