@@ -28,6 +28,7 @@ import { listingPath } from '../lib/slug';
 import { toCsv, downloadCsv } from '../lib/csv';
 import { TrafficPanel } from './TrafficPanel';
 import { ThemeToggle } from './ThemeToggle';
+import { MonthlyReportsPanel } from './MonthlyReportsPanel';
 
 const CATEGORIES = [
   'Estate Cleanouts',
@@ -595,6 +596,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         {activeTab === 'subscriptions' && (
           <div className="space-y-4">
             <h2 className="text-2xl font-bold text-stone-900 dark:text-stone-100 mb-4">Subscriptions ({subscriptions.length})</h2>
+
+            <MonthlyReportsPanel adminPassword={adminPassword} />
 
             <div className="p-4 rounded-xl bg-amber-100/80 dark:bg-stone-800/80 border border-amber-300 dark:border-stone-700 text-amber-900 dark:text-amber-200 text-sm flex items-start gap-2">
               <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />

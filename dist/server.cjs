@@ -149,6 +149,15 @@ function ensureSchema() {
         INDEX idx_events_listing (listing_id, created_at)
       )
     `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS monthly_reports (
+        listing_id VARCHAR(64) NOT NULL,
+        period CHAR(7) NOT NULL,
+        sent_to VARCHAR(255) NOT NULL,
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (listing_id, period)
+      )
+    `);
     const [cols] = await db.query(
       `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'listings'`
     );
@@ -158,6 +167,9 @@ function ensureSchema() {
     }
     if (!existing.has("featured_price_cents")) {
       await db.query("ALTER TABLE listings ADD COLUMN featured_price_cents INT NULL DEFAULT NULL");
+    }
+    if (!existing.has("featured_email")) {
+      await db.query("ALTER TABLE listings ADD COLUMN featured_email VARCHAR(255) NULL DEFAULT NULL");
     }
   })();
   return schemaReady;
@@ -253,6 +265,207 @@ function listingPath(listing) {
 
 // src/lib/site.ts
 var SITE_URL = "https://clearanestate.com";
+
+// src/lib/pricing.ts
+var BASE_PRICE_CENTS = 19900;
+var STEP_CENTS = 5e3;
+var TIER_SIZE = 10;
+var CITY_CAP = 3;
+var GUARANTEE_CONTACTS = 10;
+function pricingFor(paidCount) {
+  const tier = Math.floor(paidCount / TIER_SIZE);
+  return {
+    priceCents: BASE_PRICE_CENTS + tier * STEP_CENTS,
+    nextPriceCents: BASE_PRICE_CENTS + (tier + 1) * STEP_CENTS,
+    spotsLeftAtPrice: TIER_SIZE - paidCount % TIER_SIZE,
+    paidCount
+  };
+}
+function dollars(cents) {
+  return `$${Math.round(cents / 100).toLocaleString()}`;
+}
+
+// reports.ts
+var MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+function isValidPeriod(period) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(period);
+}
+function previousPeriod(now = /* @__PURE__ */ new Date()) {
+  const d = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function periodRange(period) {
+  const [y, m] = period.split("-").map(Number);
+  const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+  return { start: `${period}-01 00:00:00`, end: `${next}-01 00:00:00` };
+}
+function periodLabel(period) {
+  const [y, m] = period.split("-").map(Number);
+  return `${MONTH_NAMES[m - 1]} ${y}`;
+}
+function toSqlDateTime(value) {
+  if (!value) return null;
+  const d = value instanceof Date ? value : new Date(value);
+  if (isNaN(d.getTime())) return null;
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function shortDate(sqlDateTime) {
+  const [datePart] = sqlDateTime.split(" ");
+  const [y, m, d] = datePart.split("-").map(Number);
+  return `${MONTH_NAMES[m - 1].slice(0, 3)} ${d}, ${y}`;
+}
+async function countsBetween(listingId, from, to) {
+  const db = getPool();
+  const [[events]] = await db.query(
+    `SELECT SUM(event_type = 'listing_view') AS views, SUM(event_type = 'call') AS calls,
+       SUM(event_type = 'website') AS websiteClicks, SUM(event_type = 'directions') AS directions
+     FROM listing_events WHERE listing_id = ? AND created_at >= ? AND created_at < ?`,
+    [listingId, from, to]
+  );
+  const [[quotes]] = await db.query(
+    "SELECT COUNT(*) AS n FROM quote_requests WHERE listing_id = ? AND created_at >= ? AND created_at < ?",
+    [listingId, from, to]
+  );
+  const n = (v) => Number(v) || 0;
+  const numbers = {
+    views: n(events?.views),
+    calls: n(events?.calls),
+    websiteClicks: n(events?.websiteClicks),
+    directions: n(events?.directions),
+    quotes: n(quotes?.n),
+    contacts: 0
+  };
+  numbers.contacts = numbers.calls + numbers.websiteClicks + numbers.quotes;
+  return numbers;
+}
+async function findRecipient(row, stripe) {
+  if (row.featured_email) return { recipient: row.featured_email, recipientSource: "payment" };
+  const db = getPool();
+  if (stripe && row.stripe_subscription_id) {
+    try {
+      const sub = await stripe.subscriptions.retrieve(row.stripe_subscription_id, { expand: ["customer"] });
+      const customer = sub.customer;
+      const email = "email" in customer ? customer.email : null;
+      if (email) {
+        await db.query("UPDATE listings SET featured_email = ? WHERE id = ?", [email, row.id]);
+        return { recipient: email, recipientSource: "stripe" };
+      }
+    } catch (err) {
+      console.error("Could not look up Stripe customer email for listing", row.id, err);
+    }
+  }
+  const [claims] = await db.query(
+    "SELECT claimant_email FROM claim_requests WHERE listing_id = ? AND status = 'approved' ORDER BY created_at DESC LIMIT 1",
+    [row.id]
+  );
+  const claimEmail = claims[0]?.claimant_email;
+  if (claimEmail) return { recipient: claimEmail, recipientSource: "claim" };
+  if (row.email) return { recipient: row.email, recipientSource: "listing" };
+  return { recipient: null, recipientSource: null };
+}
+async function buildReports(period, stripe) {
+  const db = getPool();
+  if (!db) throw new Error("Database is not configured on server.");
+  await ensureSchema();
+  const { start, end } = periodRange(period);
+  const [rows] = await db.query(
+    "SELECT * FROM listings WHERE featured = TRUE AND (featured_at IS NULL OR featured_at < ?) ORDER BY featured_at ASC",
+    [end]
+  );
+  const [sentRows] = await db.query("SELECT listing_id FROM monthly_reports WHERE period = ?", [period]);
+  const sent = new Set(sentRows.map((r) => r.listing_id));
+  const reports = [];
+  for (const row of rows) {
+    const featuredSince = toSqlDateTime(row.featured_at);
+    const from = featuredSince && featuredSince > start ? featuredSince : start;
+    const numbers = await countsBetween(row.id, from, end);
+    const sinceFeatured = featuredSince ? await countsBetween(row.id, featuredSince, end) : numbers;
+    const { recipient, recipientSource } = await findRecipient(row, stripe);
+    let skipReason = null;
+    if (sent.has(row.id)) skipReason = "Already sent";
+    else if (!recipient) skipReason = "No email address";
+    else if (numbers.views === 0 && numbers.contacts === 0 && numbers.directions === 0) skipReason = "No activity this month";
+    reports.push({
+      listingId: row.id,
+      name: row.name,
+      city: row.city,
+      state: row.state,
+      recipient,
+      recipientSource,
+      from,
+      numbers,
+      contactsSinceFeatured: sinceFeatured.contacts,
+      featuredSince,
+      alreadySent: sent.has(row.id),
+      skipReason
+    });
+  }
+  return reports;
+}
+function reportEmailText(report, period, listingUrl) {
+  const { numbers } = report;
+  const partial = report.from !== periodRange(period).start;
+  const lines = [
+    `Hi ${report.name} team,`,
+    "",
+    `Here's what your featured listing on ClearAnEstate.com got in ${periodLabel(period)}${partial ? ` (since you joined on ${shortDate(report.from)})` : ""}:`,
+    "",
+    `  Listing views:       ${numbers.views}`,
+    `  Phone taps:          ${numbers.calls}`,
+    `  Website clicks:      ${numbers.websiteClicks}`,
+    `  Directions:          ${numbers.directions}`,
+    `  Estimate requests:   ${numbers.quotes}`,
+    "",
+    `That's ${numbers.contacts} ${numbers.contacts === 1 ? "contact" : "contacts"} (phone taps, website clicks and estimate requests) from people looking for help in ${report.city}.`
+  ];
+  if (report.featuredSince) {
+    const firstYearEnds = new Date(report.featuredSince.replace(" ", "T"));
+    firstYearEnds.setFullYear(firstYearEnds.getFullYear() + 1);
+    if (/* @__PURE__ */ new Date() < firstYearEnds) {
+      const total = report.contactsSinceFeatured;
+      lines.push(
+        "",
+        total >= GUARANTEE_CONTACTS ? `Since you joined, your listing has had ${total} contacts, past the ${GUARANTEE_CONTACTS} we guarantee in your first year.` : `Since you joined, your listing has had ${total} of the ${GUARANTEE_CONTACTS} contacts we guarantee in your first year.`
+      );
+    }
+  }
+  lines.push(
+    "",
+    `Your listing: ${listingUrl}`,
+    "",
+    "Phone taps count people who tapped your number on our site. Calls from people who typed your number in by hand are not included, so your real number is likely higher.",
+    "",
+    "Questions, or anything you want changed on your listing? Just reply to this email.",
+    "",
+    "ClearAnEstate.com"
+  );
+  return lines.join("\n");
+}
+async function sendReports(period, stripe) {
+  const db = getPool();
+  const reports = await buildReports(period, stripe);
+  const result = { sent: [], skipped: [], failed: [] };
+  for (const report of reports) {
+    if (report.skipReason || !report.recipient) {
+      result.skipped.push({ name: report.name, reason: report.skipReason || "No email address" });
+      continue;
+    }
+    const listingUrl = `${SITE_URL}${listingPath({ id: report.listingId, name: report.name, city: report.city, state: report.state })}`;
+    const ok = await sendMail({
+      to: report.recipient,
+      subject: `Your ClearAnEstate results for ${periodLabel(period)}`,
+      text: reportEmailText(report, period, listingUrl)
+    });
+    if (ok) {
+      await db.query("INSERT IGNORE INTO monthly_reports (listing_id, period, sent_to) VALUES (?, ?, ?)", [report.listingId, period, report.recipient]);
+      result.sent.push(report.name);
+    } else {
+      result.failed.push(report.name);
+    }
+  }
+  return result;
+}
 
 // src/lib/badge.ts
 function badgeImagePath(featured) {
@@ -553,24 +766,6 @@ function landingDescription(match, cityName, count) {
   return `Compare ${count} ${what} ${count === 1 ? "company" : "companies"} in ${where}. See services, phone numbers and websites, and contact local pros directly on ClearAnEstate.com.`;
 }
 
-// src/lib/pricing.ts
-var BASE_PRICE_CENTS = 19900;
-var STEP_CENTS = 5e3;
-var TIER_SIZE = 10;
-var CITY_CAP = 3;
-function pricingFor(paidCount) {
-  const tier = Math.floor(paidCount / TIER_SIZE);
-  return {
-    priceCents: BASE_PRICE_CENTS + tier * STEP_CENTS,
-    nextPriceCents: BASE_PRICE_CENTS + (tier + 1) * STEP_CENTS,
-    spotsLeftAtPrice: TIER_SIZE - paidCount % TIER_SIZE,
-    paidCount
-  };
-}
-function dollars(cents) {
-  return `$${Math.round(cents / 100).toLocaleString()}`;
-}
-
 // server.ts
 import_dotenv.default.config();
 var app = (0, import_express.default)();
@@ -653,8 +848,13 @@ app.post(
           try {
             await ensureSchema();
             await db.query(
-              "UPDATE listings SET featured = TRUE, featured_at = CURRENT_TIMESTAMP, featured_price_cents = ?, stripe_subscription_id = ? WHERE id = ?",
-              [priceCents, typeof session.subscription === "string" ? session.subscription : null, listingId]
+              "UPDATE listings SET featured = TRUE, featured_at = CURRENT_TIMESTAMP, featured_price_cents = ?, stripe_subscription_id = ?, featured_email = ? WHERE id = ?",
+              [
+                priceCents,
+                typeof session.subscription === "string" ? session.subscription : null,
+                session.customer_details?.email || null,
+                listingId
+              ]
             );
             console.log("Marked listing as featured after successful payment:", listingId);
           } catch (err) {
@@ -1340,7 +1540,8 @@ app.get("/api/admin/stats", adminAuthLimiter, requireAdmin, async (req, res) => 
          COUNT(DISTINCT visitor_hash, DATE(created_at)) AS visitors,
          SUM(event_type = 'listing_view') AS listingViews,
          SUM(event_type = 'call') AS calls,
-         SUM(event_type = 'website') AS websiteClicks
+         SUM(event_type = 'website') AS websiteClicks,
+         SUM(event_type = 'directions') AS directions
        FROM listing_events WHERE ${since}`,
       [days]
     );
@@ -1360,7 +1561,8 @@ app.get("/api/admin/stats", adminAuthLimiter, requireAdmin, async (req, res) => 
       `SELECT e.listing_id AS listingId, l.name, l.city, l.state, l.featured,
          SUM(e.event_type = 'listing_view') AS views,
          SUM(e.event_type = 'call') AS calls,
-         SUM(e.event_type = 'website') AS websiteClicks
+         SUM(e.event_type = 'website') AS websiteClicks,
+         SUM(e.event_type = 'directions') AS directions
        FROM listing_events e LEFT JOIN listings l ON l.id = e.listing_id
        WHERE e.listing_id IS NOT NULL AND e.${since}
        GROUP BY e.listing_id, l.name, l.city, l.state, l.featured
@@ -1382,6 +1584,7 @@ app.get("/api/admin/stats", adminAuthLimiter, requireAdmin, async (req, res) => 
       listingViews: n(totals?.listingViews),
       calls: n(totals?.calls),
       websiteClicks: n(totals?.websiteClicks),
+      directions: n(totals?.directions),
       quoteRequests: n(quoteTotals?.quotes),
       daily: daily.map((d) => ({
         day: d.day instanceof Date ? d.day.toISOString().split("T")[0] : String(d.day).split("T")[0],
@@ -1396,7 +1599,8 @@ app.get("/api/admin/stats", adminAuthLimiter, requireAdmin, async (req, res) => 
         featured: !!r.featured,
         views: n(r.views),
         calls: n(r.calls),
-        websiteClicks: n(r.websiteClicks)
+        websiteClicks: n(r.websiteClicks),
+        directions: n(r.directions)
       })),
       topPages: topPages.map((r) => ({ path: r.path || "/", views: n(r.views) }))
     });
@@ -1525,6 +1729,52 @@ app.post("/api/admin/listings/bulk-import", adminAuthLimiter, requireAdmin, asyn
   } catch (err) {
     console.error("Error bulk-importing listings:", err);
     res.status(500).json({ error: "Bulk import failed.", details: err.message, imported, skipped });
+  }
+});
+app.get("/api/admin/reports", adminAuthLimiter, requireAdmin, async (req, res) => {
+  const period = String(req.query.period || previousPeriod());
+  if (!isValidPeriod(period)) return res.status(400).json({ error: "Month must look like 2026-11." });
+  try {
+    res.json({ period, label: periodLabel(period), reports: await buildReports(period, getStripe()) });
+  } catch (err) {
+    console.error("Error building monthly reports:", err);
+    res.status(500).json({ error: "Failed to build monthly reports.", details: err.message });
+  }
+});
+app.post("/api/admin/reports/send", adminAuthLimiter, requireAdmin, async (req, res) => {
+  const period = String(req.body?.period || previousPeriod());
+  if (!isValidPeriod(period)) return res.status(400).json({ error: "Month must look like 2026-11." });
+  try {
+    res.json(await sendReports(period, getStripe()));
+  } catch (err) {
+    console.error("Error sending monthly reports:", err);
+    res.status(500).json({ error: "Failed to send monthly reports.", details: err.message });
+  }
+});
+app.get("/api/cron/monthly-reports", adminAuthLimiter, async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return res.status(503).json({ error: "CRON_SECRET is not set on the server." });
+  const given = Buffer.from(String(req.query.key || ""));
+  const expected = Buffer.from(secret);
+  if (given.length !== expected.length || !import_crypto.default.timingSafeEqual(given, expected)) {
+    return res.status(401).json({ error: "Wrong key." });
+  }
+  try {
+    const period = previousPeriod();
+    const result = await sendReports(period, getStripe());
+    console.log(`Monthly reports for ${period}:`, result);
+    if (result.sent.length > 0 || result.failed.length > 0) {
+      notifyAdmin(
+        `Monthly results emails sent for ${periodLabel(period)}`,
+        `Sent: ${result.sent.length ? result.sent.join(", ") : "none"}
+Failed: ${result.failed.length ? result.failed.join(", ") : "none"}
+Skipped: ${result.skipped.map((s) => `${s.name} (${s.reason})`).join(", ") || "none"}`
+      );
+    }
+    res.json({ period, ...result });
+  } catch (err) {
+    console.error("Error sending scheduled monthly reports:", err);
+    res.status(500).json({ error: "Failed to send monthly reports." });
   }
 });
 app.get("/api/admin/quotes", adminAuthLimiter, requireAdmin, async (req, res) => {

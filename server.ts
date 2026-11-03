@@ -8,6 +8,7 @@ import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, sendTestMail, isMailConfigured } from './mailer';
+import { buildReports, sendReports, previousPeriod, periodLabel, isValidPeriod } from './reports';
 import { listingPath } from './src/lib/slug';
 import { badgeHtml } from './src/lib/badge';
 import { GUIDES, guidePath, parseGuidePath } from './src/lib/guides';
@@ -134,8 +135,13 @@ app.post(
             // featured_at = now puts this business below everyone already featured in its
             // city, which is the "first paid, first position" promise on the advertise page.
             await db.query(
-              'UPDATE listings SET featured = TRUE, featured_at = CURRENT_TIMESTAMP, featured_price_cents = ?, stripe_subscription_id = ? WHERE id = ?',
-              [priceCents, typeof session.subscription === 'string' ? session.subscription : null, listingId]
+              'UPDATE listings SET featured = TRUE, featured_at = CURRENT_TIMESTAMP, featured_price_cents = ?, stripe_subscription_id = ?, featured_email = ? WHERE id = ?',
+              [
+                priceCents,
+                typeof session.subscription === 'string' ? session.subscription : null,
+                session.customer_details?.email || null,
+                listingId,
+              ]
             );
             console.log('Marked listing as featured after successful payment:', listingId);
           } catch (err) {
@@ -960,7 +966,8 @@ app.get('/api/admin/stats', adminAuthLimiter, requireAdmin, async (req, res) => 
          COUNT(DISTINCT visitor_hash, DATE(created_at)) AS visitors,
          SUM(event_type = 'listing_view') AS listingViews,
          SUM(event_type = 'call') AS calls,
-         SUM(event_type = 'website') AS websiteClicks
+         SUM(event_type = 'website') AS websiteClicks,
+         SUM(event_type = 'directions') AS directions
        FROM listing_events WHERE ${since}`,
       [days]
     )) as any;
@@ -983,7 +990,8 @@ app.get('/api/admin/stats', adminAuthLimiter, requireAdmin, async (req, res) => 
       `SELECT e.listing_id AS listingId, l.name, l.city, l.state, l.featured,
          SUM(e.event_type = 'listing_view') AS views,
          SUM(e.event_type = 'call') AS calls,
-         SUM(e.event_type = 'website') AS websiteClicks
+         SUM(e.event_type = 'website') AS websiteClicks,
+         SUM(e.event_type = 'directions') AS directions
        FROM listing_events e LEFT JOIN listings l ON l.id = e.listing_id
        WHERE e.listing_id IS NOT NULL AND e.${since}
        GROUP BY e.listing_id, l.name, l.city, l.state, l.featured
@@ -1008,6 +1016,7 @@ app.get('/api/admin/stats', adminAuthLimiter, requireAdmin, async (req, res) => 
       listingViews: n(totals?.listingViews),
       calls: n(totals?.calls),
       websiteClicks: n(totals?.websiteClicks),
+      directions: n(totals?.directions),
       quoteRequests: n(quoteTotals?.quotes),
       daily: (daily as any[]).map((d) => ({
         day: d.day instanceof Date ? d.day.toISOString().split('T')[0] : String(d.day).split('T')[0],
@@ -1023,6 +1032,7 @@ app.get('/api/admin/stats', adminAuthLimiter, requireAdmin, async (req, res) => 
         views: n(r.views),
         calls: n(r.calls),
         websiteClicks: n(r.websiteClicks),
+        directions: n(r.directions),
       })),
       topPages: (topPages as any[]).map((r) => ({ path: r.path || '/', views: n(r.views) })),
     });
@@ -1179,6 +1189,58 @@ app.post('/api/admin/listings/bulk-import', adminAuthLimiter, requireAdmin, asyn
   } catch (err: any) {
     console.error('Error bulk-importing listings:', err);
     res.status(500).json({ error: 'Bulk import failed.', details: err.message, imported, skipped });
+  }
+});
+
+// Admin: preview the monthly results emails for a month (default: last month).
+app.get('/api/admin/reports', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const period = String(req.query.period || previousPeriod());
+  if (!isValidPeriod(period)) return res.status(400).json({ error: 'Month must look like 2026-11.' });
+  try {
+    res.json({ period, label: periodLabel(period), reports: await buildReports(period, getStripe()) });
+  } catch (err: any) {
+    console.error('Error building monthly reports:', err);
+    res.status(500).json({ error: 'Failed to build monthly reports.', details: err.message });
+  }
+});
+
+// Admin: send the monthly results emails that haven't gone out yet for a month.
+app.post('/api/admin/reports/send', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const period = String(req.body?.period || previousPeriod());
+  if (!isValidPeriod(period)) return res.status(400).json({ error: 'Month must look like 2026-11.' });
+  try {
+    res.json(await sendReports(period, getStripe()));
+  } catch (err: any) {
+    console.error('Error sending monthly reports:', err);
+    res.status(500).json({ error: 'Failed to send monthly reports.', details: err.message });
+  }
+});
+
+// Scheduled: a cPanel cron job opens this link on the 1st of each month to send last
+// month's results. CRON_SECRET (an environment variable) keeps anyone else from
+// triggering it. Safe to call twice: a month is never sent twice to the same listing.
+app.get('/api/cron/monthly-reports', adminAuthLimiter, async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return res.status(503).json({ error: 'CRON_SECRET is not set on the server.' });
+  const given = Buffer.from(String(req.query.key || ''));
+  const expected = Buffer.from(secret);
+  if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) {
+    return res.status(401).json({ error: 'Wrong key.' });
+  }
+  try {
+    const period = previousPeriod();
+    const result = await sendReports(period, getStripe());
+    console.log(`Monthly reports for ${period}:`, result);
+    if (result.sent.length > 0 || result.failed.length > 0) {
+      notifyAdmin(
+        `Monthly results emails sent for ${periodLabel(period)}`,
+        `Sent: ${result.sent.length ? result.sent.join(', ') : 'none'}\nFailed: ${result.failed.length ? result.failed.join(', ') : 'none'}\nSkipped: ${result.skipped.map((s) => `${s.name} (${s.reason})`).join(', ') || 'none'}`
+      );
+    }
+    res.json({ period, ...result });
+  } catch (err: any) {
+    console.error('Error sending scheduled monthly reports:', err);
+    res.status(500).json({ error: 'Failed to send monthly reports.' });
   }
 });
 

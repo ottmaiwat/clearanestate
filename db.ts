@@ -135,11 +135,24 @@ export function ensureSchema(): Promise<void> {
       )
     `);
 
+    // One row per monthly results email sent, so a month is never sent twice to a listing.
+    // period is 'YYYY-MM'.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS monthly_reports (
+        listing_id VARCHAR(64) NOT NULL,
+        period CHAR(7) NOT NULL,
+        sent_to VARCHAR(255) NOT NULL,
+        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (listing_id, period)
+      )
+    `);
+
     // Columns added after the listings table first shipped. CREATE TABLE IF NOT EXISTS
     // won't add them to an existing table, so add any that are missing.
     // featured_at: when the listing became featured - featured listings are shown in
     //   sign-up order, so the first business to feature in a city stays on top.
     // featured_price_cents: the yearly price that business locked in at checkout.
+    // featured_email: the address the business paid with; monthly results go there.
     const [cols] = await db.query(
       `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'listings'`
     );
@@ -149,6 +162,9 @@ export function ensureSchema(): Promise<void> {
     }
     if (!existing.has('featured_price_cents')) {
       await db.query('ALTER TABLE listings ADD COLUMN featured_price_cents INT NULL DEFAULT NULL');
+    }
+    if (!existing.has('featured_email')) {
+      await db.query('ALTER TABLE listings ADD COLUMN featured_email VARCHAR(255) NULL DEFAULT NULL');
     }
   })();
 

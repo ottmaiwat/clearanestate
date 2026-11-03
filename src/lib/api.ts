@@ -228,6 +228,7 @@ export type TrafficStats = {
   listingViews: number;
   calls: number;
   websiteClicks: number;
+  directions: number;
   quoteRequests: number;
   daily: { day: string; visitors: number; contacts: number }[];
   topListings: {
@@ -239,6 +240,7 @@ export type TrafficStats = {
     views: number;
     calls: number;
     websiteClicks: number;
+    directions: number;
   }[];
   topPages: { path: string; views: number }[];
 };
@@ -287,4 +289,38 @@ export async function startFeaturedCheckout(listingId: string): Promise<string> 
   });
   const data = await parseJsonOrThrow(res);
   return data.url;
+}
+
+export type ListingReport = {
+  listingId: string;
+  name: string;
+  city: string;
+  state: string;
+  recipient: string | null;
+  recipientSource: 'payment' | 'stripe' | 'claim' | 'listing' | null;
+  from: string;
+  numbers: { views: number; calls: number; websiteClicks: number; directions: number; quotes: number; contacts: number };
+  contactsSinceFeatured: number;
+  featuredSince: string | null;
+  alreadySent: boolean;
+  skipReason: string | null;
+};
+
+export async function fetchReportsAdmin(password: string, period?: string): Promise<{ period: string; label: string; reports: ListingReport[] }> {
+  const res = await fetch(`/api/admin/reports${period ? `?period=${encodeURIComponent(period)}` : ''}`, {
+    headers: { 'x-admin-password': password },
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function sendReportsAdmin(
+  password: string,
+  period: string
+): Promise<{ sent: string[]; skipped: { name: string; reason: string }[]; failed: string[] }> {
+  const res = await fetch('/api/admin/reports/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-password': password },
+    body: JSON.stringify({ period }),
+  });
+  return parseJsonOrThrow(res);
 }

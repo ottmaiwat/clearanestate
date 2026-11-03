@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Eye, Phone, Globe, Users, Send, Sparkles } from 'lucide-react';
+import { Eye, Phone, Globe, Users, Send, Sparkles, Navigation } from 'lucide-react';
 import { fetchTrafficStatsAdmin, TrafficStats } from '../lib/api';
 
 interface TrafficPanelProps {
@@ -74,6 +74,7 @@ export const TrafficPanel: React.FC<TrafficPanelProps> = ({ adminPassword, dbCon
             <StatTile label="Business contacts" value={contacts} icon={<Sparkles className="w-3.5 h-3.5" />} hint="Calls + website clicks + quote requests" />
             <StatTile label="Call clicks" value={stats.calls} icon={<Phone className="w-3.5 h-3.5" />} />
             <StatTile label="Website clicks" value={stats.websiteClicks} icon={<Globe className="w-3.5 h-3.5" />} />
+            <StatTile label="Directions" value={stats.directions} icon={<Navigation className="w-3.5 h-3.5" />} hint="Featured cards only" />
           </div>
 
           <div className="bg-white dark:bg-stone-800 rounded-2xl border border-stone-200 dark:border-stone-700 p-4">
@@ -107,6 +108,7 @@ export const TrafficPanel: React.FC<TrafficPanelProps> = ({ adminPassword, dbCon
                       <th className="pb-2 font-bold text-right">Views</th>
                       <th className="pb-2 font-bold text-right">Calls</th>
                       <th className="pb-2 font-bold text-right">Website</th>
+                      <th className="pb-2 font-bold text-right">Directions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -122,6 +124,7 @@ export const TrafficPanel: React.FC<TrafficPanelProps> = ({ adminPassword, dbCon
                         <td className="py-1.5 text-right tabular-nums">{l.views}</td>
                         <td className="py-1.5 text-right tabular-nums">{l.calls}</td>
                         <td className="py-1.5 text-right tabular-nums">{l.websiteClicks}</td>
+                        <td className="py-1.5 text-right tabular-nums">{l.directions}</td>
                       </tr>
                     ))}
                   </tbody>
