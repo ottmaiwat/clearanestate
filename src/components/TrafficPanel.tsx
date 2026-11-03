@@ -9,6 +9,28 @@ interface TrafficPanelProps {
 
 const RANGES = [7, 30, 90, 365];
 
+function localDayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// One entry per day in the range ending today, including days with no visits, so the
+// chart's spacing reflects time rather than only the days that had traffic.
+function fillDays(daily: TrafficStats['daily'], days: number): TrafficStats['daily'] {
+  const byDay = new Map(daily.map((d) => [d.day, d]));
+  const out: TrafficStats['daily'] = [];
+  const today = new Date();
+  for (let i = days - 1; i >= 0; i--) {
+    const key = localDayKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - i));
+    out.push(byDay.get(key) ?? { day: key, visitors: 0, contacts: 0 });
+  }
+  return out;
+}
+
+function dayLabel(key: string): string {
+  const [y, m, d] = key.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
 const StatTile: React.FC<{ label: string; value: number; icon: React.ReactNode; hint?: string }> = ({ label, value, icon, hint }) => (
   <div className="bg-white dark:bg-stone-800 rounded-2xl border border-stone-200 dark:border-stone-700 p-4">
     <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-stone-500">
@@ -41,7 +63,10 @@ export const TrafficPanel: React.FC<TrafficPanelProps> = ({ adminPassword, dbCon
   }
 
   const contacts = stats ? stats.calls + stats.websiteClicks + stats.quoteRequests : 0;
-  const maxVisitors = stats ? Math.max(1, ...stats.daily.map((d) => d.visitors)) : 1;
+  const series = stats ? fillDays(stats.daily, days) : [];
+  const maxVisitors = Math.max(1, ...series.map((d) => d.visitors));
+  const hasVisits = series.some((d) => d.visitors > 0);
+  const showValues = series.length <= 31;
 
   return (
     <div className="space-y-6">
@@ -79,19 +104,29 @@ export const TrafficPanel: React.FC<TrafficPanelProps> = ({ adminPassword, dbCon
 
           <div className="bg-white dark:bg-stone-800 rounded-2xl border border-stone-200 dark:border-stone-700 p-4">
             <h3 className="text-sm font-bold text-stone-700 dark:text-stone-300 mb-3">Visitors per day</h3>
-            {stats.daily.length === 0 ? (
+            {!hasVisits ? (
               <p className="text-sm text-stone-500">No visits recorded yet in this period.</p>
             ) : (
-              <div className="flex items-end gap-px h-32" role="img" aria-label="Visitors per day">
-                {stats.daily.map((d) => (
-                  <div
-                    key={d.day}
-                    className="flex-1 bg-amber-500 rounded-t-sm min-h-px"
-                    style={{ height: `${(d.visitors / maxVisitors) * 100}%` }}
-                    title={`${d.day}: ${d.visitors} visitors, ${d.contacts} contacts`}
-                  />
-                ))}
-              </div>
+              <>
+                <div className={`flex items-end h-36 ${showValues ? 'gap-1' : 'gap-px'}`} role="img" aria-label="Visitors per day">
+                  {series.map((d) => (
+                    <div key={d.day} className="flex-1 h-full flex flex-col justify-end items-center min-w-0" title={`${dayLabel(d.day)}: ${d.visitors} visitors, ${d.contacts} contacts`}>
+                      {showValues && d.visitors > 0 && (
+                        <span className="text-[10px] font-bold tabular-nums text-stone-600 dark:text-stone-300 mb-0.5">{d.visitors}</span>
+                      )}
+                      <div
+                        className={`w-full rounded-t-sm ${d.visitors > 0 ? 'bg-amber-500' : 'bg-stone-200 dark:bg-stone-700'}`}
+                        style={{ height: d.visitors > 0 ? `${(d.visitors / maxVisitors) * 85}%` : '2px' }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="flex justify-between text-[10px] text-stone-500 mt-1.5 tabular-nums">
+                  <span>{dayLabel(series[0].day)}</span>
+                  {series.length > 2 && <span>{dayLabel(series[Math.floor(series.length / 2)].day)}</span>}
+                  <span>{dayLabel(series[series.length - 1].day)}</span>
+                </div>
+              </>
             )}
           </div>
 

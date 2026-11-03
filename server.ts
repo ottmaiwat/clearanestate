@@ -978,11 +978,11 @@ app.get('/api/admin/stats', adminAuthLimiter, requireAdmin, async (req, res) => 
     )) as any;
 
     const [daily] = await db.query(
-      `SELECT DATE(created_at) AS day,
+      `SELECT DATE_FORMAT(created_at, '%Y-%m-%d') AS day,
          COUNT(DISTINCT visitor_hash) AS visitors,
          SUM(event_type IN ('call', 'website')) AS contacts
        FROM listing_events WHERE ${since}
-       GROUP BY DATE(created_at) ORDER BY day`,
+       GROUP BY day ORDER BY day`,
       [days]
     );
 
