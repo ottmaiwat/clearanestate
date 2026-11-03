@@ -577,7 +577,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                       {sub.amount !== null && (
                         <span className="flex items-center gap-1.5">
                           <CreditCard className="w-3.5 h-3.5 text-amber-600" />
-                          ${(sub.amount / 100).toFixed(2)}/mo
+                          ${(sub.amount / 100).toFixed(2)}/{sub.interval === 'year' ? 'yr' : 'mo'}
                         </span>
                       )}
                       {sub.currentPeriodEnd && (

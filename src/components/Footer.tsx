@@ -4,14 +4,14 @@ import { ShieldCheck, Tag, Sparkles, Building, Lock } from 'lucide-react';
 interface FooterProps {
   onOpenAdmin: () => void;
   onOpenSubmitModal: () => void;
-  onOpenFeaturedModal: () => void;
+  onOpenAdvertise: () => void;
   onOpenLegal: (tab: 'privacy' | 'terms') => void;
 }
 
 export const Footer: React.FC<FooterProps> = ({
   onOpenAdmin,
   onOpenSubmitModal,
-  onOpenFeaturedModal,
+  onOpenAdvertise,
   onOpenLegal,
 }) => {
   return (
@@ -50,11 +50,11 @@ export const Footer: React.FC<FooterProps> = ({
               </li>
               <li>
                 <button
-                  onClick={onOpenFeaturedModal}
+                  onClick={onOpenAdvertise}
                   className="hover:text-amber-400 transition-colors text-left flex items-center gap-1 text-amber-400 font-semibold"
                   id="footer-get-featured-link"
                 >
-                  <Sparkles className="w-3.5 h-3.5" /> Get Featured ($30/mo)
+                  <Sparkles className="w-3.5 h-3.5" /> Advertise: Get Featured
                 </button>
               </li>
               <li>

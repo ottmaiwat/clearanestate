@@ -134,6 +134,22 @@ export function ensureSchema(): Promise<void> {
         INDEX idx_events_listing (listing_id, created_at)
       )
     `);
+
+    // Columns added after the listings table first shipped. CREATE TABLE IF NOT EXISTS
+    // won't add them to an existing table, so add any that are missing.
+    // featured_at: when the listing became featured - featured listings are shown in
+    //   sign-up order, so the first business to feature in a city stays on top.
+    // featured_price_cents: the yearly price that business locked in at checkout.
+    const [cols] = await db.query(
+      `SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'listings'`
+    );
+    const existing = new Set((cols as any[]).map((c) => c.COLUMN_NAME));
+    if (!existing.has('featured_at')) {
+      await db.query('ALTER TABLE listings ADD COLUMN featured_at TIMESTAMP NULL DEFAULT NULL');
+    }
+    if (!existing.has('featured_price_cents')) {
+      await db.query('ALTER TABLE listings ADD COLUMN featured_price_cents INT NULL DEFAULT NULL');
+    }
   })();
 
   return schemaReady;

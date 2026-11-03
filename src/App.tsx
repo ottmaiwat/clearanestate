@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Listing, PendingSubmission, QuoteRequest, ClaimRequest, ListingCategory, FilterState } from './types';
-import { INITIAL_LISTINGS, INITIAL_PENDING, DEFAULT_STRIPE_PAYMENT_LINK } from './data/seedListings';
+import { INITIAL_LISTINGS, INITIAL_PENDING } from './data/seedListings';
 import { listingPath } from './lib/slug';
 import { useDocumentMeta } from './lib/useDocumentMeta';
 import {
@@ -20,7 +20,7 @@ import { Header } from './components/Header';
 import { PriceTagCard } from './components/PriceTagCard';
 import { ListingDetailModal } from './components/ListingDetailModal';
 import { SubmitListingModal } from './components/SubmitListingModal';
-import { GetFeaturedModal } from './components/GetFeaturedModal';
+import { AdvertisePage } from './components/AdvertisePage';
 import { AdminPage } from './components/AdminPage';
 import { ClaimModal } from './components/ClaimModal';
 import { QuoteModal } from './components/QuoteModal';
@@ -89,14 +89,6 @@ export default function App() {
   const [claims, setClaims] = useState<ClaimRequest[]>([]);
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
 
-  // Stripe link state
-  const [stripePaymentLink, setStripePaymentLink] = useState<string>(() => {
-    const saved = localStorage.getItem('clearanestate_stripe_link');
-    if (!saved || saved.includes('demo_clearanestate')) {
-      return DEFAULT_STRIPE_PAYMENT_LINK;
-    }
-    return saved;
-  });
 
   // Bookmarks state
   const [bookmarks, setBookmarks] = useState<string[]>(() => {
@@ -146,6 +138,7 @@ export default function App() {
 
   // State / city / service landing pages (/estate-cleanouts/missouri/kansas-city), derived
   // from the URL so each one is its own real, indexable page.
+  const isAdvertisePage = backgroundPath.replace(/\/+$/, '') === '/advertise';
   const landing = parseLandingPath(backgroundPath);
   const landingListings = landing
     ? listings.filter(
@@ -174,6 +167,12 @@ export default function App() {
         description: landingDescription(landing, landingCityName, landingListings.length),
         path: backgroundPath.toLowerCase().replace(/\/+$/, ''),
       }
+    : isAdvertisePage
+    ? {
+        title: 'Get Your Estate Business Featured | ClearAnEstate.com',
+        description: 'Put your estate cleanout, senior move or estate sale business at the top of your city’s page. One flat yearly price, locked while you stay, with only 3 spots per city.',
+        path: '/advertise',
+      }
     : null;
   useDocumentMeta(pageMeta?.title ?? null, pageMeta?.description ?? null, pageMeta?.path ?? null);
 
@@ -196,10 +195,8 @@ export default function App() {
 
   // Modal States
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
-  const [isFeaturedOpen, setIsFeaturedOpen] = useState(false);
   const [claimingListing, setClaimingListing] = useState<Listing | null>(null);
   const [quoteListing, setQuoteListing] = useState<Listing | null>(null);
-  const [featuredListingId, setFeaturedListingId] = useState<string | null>(null);
   const [featuredSuccessBanner, setFeaturedSuccessBanner] = useState(false);
   const [legalModal, setLegalModal] = useState<{ open: boolean; tab: 'privacy' | 'terms' }>({
     open: false,
@@ -214,10 +211,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('clearanestate_pending', JSON.stringify(pending));
   }, [pending]);
-
-  useEffect(() => {
-    localStorage.setItem('clearanestate_stripe_link', stripePaymentLink);
-  }, [stripePaymentLink]);
 
   useEffect(() => {
     localStorage.setItem('clearanestate_bookmarks', JSON.stringify(bookmarks));
@@ -524,6 +517,8 @@ export default function App() {
     if (filters.sortBy === 'featured') {
       if (a.featured && !b.featured) return -1;
       if (!a.featured && b.featured) return 1;
+      // Featured listings keep their sign-up order: first to feature stays on top.
+      if (a.featured && b.featured) return (a.featuredAt || '').localeCompare(b.featuredAt || '');
       return b.rating - a.rating;
     }
     if (filters.sortBy === 'rating') {
@@ -567,7 +562,8 @@ export default function App() {
         {/* Header Navigation */}
         <Header
           onOpenSubmitModal={() => setIsSubmitOpen(true)}
-          onOpenFeaturedModal={() => { setFeaturedListingId(null); setIsFeaturedOpen(true); }}
+          onOpenAdvertise={() => navigate('/advertise')}
+          showAdvertiseBanner={!isAdvertisePage}
           bookmarkCount={bookmarks.length}
           onToggleFavoritesOnly={() => setShowFavoritesOnly(!showFavoritesOnly)}
           showFavoritesOnly={showFavoritesOnly}
@@ -587,6 +583,10 @@ export default function App() {
           </div>
         )}
 
+        {isAdvertisePage ? (
+          <AdvertisePage listings={listings} />
+        ) : (
+        <>
         {/* Hero Section styled as Estate Sale Price Tag Theme */}
         <section className="bg-gradient-to-b from-amber-100/70 via-amber-50/50 to-stone-100 dark:from-stone-900 dark:via-stone-900/60 dark:to-stone-950 border-b border-stone-200 dark:border-stone-800 py-10 px-4 sm:px-6 lg:px-8">
           <div className="max-w-5xl mx-auto text-center space-y-4">
@@ -817,6 +817,8 @@ export default function App() {
         </main>
 
         <LocationLinks listings={listings} landing={landing} cityName={landingCityName} />
+        </>
+        )}
       </div>
 
       {/* Modals Container */}
@@ -831,29 +833,13 @@ export default function App() {
           navigate(backgroundPath);
           setQuoteListing(item);
         }}
-        onGetFeatured={(item) => {
-          navigate(backgroundPath);
-          setFeaturedListingId(item.id);
-          setIsFeaturedOpen(true);
-        }}
+        onGetFeatured={(item) => navigate(`/advertise?listing=${encodeURIComponent(item.id)}`)}
       />
 
       <SubmitListingModal
         isOpen={isSubmitOpen}
         onClose={() => setIsSubmitOpen(false)}
         onSubmit={handleAddSubmission}
-      />
-
-      <GetFeaturedModal
-        isOpen={isFeaturedOpen}
-        onClose={() => {
-          setIsFeaturedOpen(false);
-          setFeaturedListingId(null);
-        }}
-        stripePaymentLink={stripePaymentLink}
-        onUpdateStripeLink={(newLink) => setStripePaymentLink(newLink)}
-        listings={listings}
-        preselectedListingId={featuredListingId}
       />
 
       <ClaimModal
@@ -871,7 +857,7 @@ export default function App() {
       <Footer
         onOpenAdmin={() => { window.location.hash = '#/admin'; setIsAdminPage(true); }}
         onOpenSubmitModal={() => setIsSubmitOpen(true)}
-        onOpenFeaturedModal={() => { setFeaturedListingId(null); setIsFeaturedOpen(true); }}
+        onOpenAdvertise={() => navigate('/advertise')}
         onOpenLegal={(tab) => setLegalModal({ open: true, tab })}
       />
 

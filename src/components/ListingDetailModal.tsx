@@ -285,14 +285,14 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 {listing.claimed ? 'Claimed Business Owner' : 'Is this your business? Claim it free'}
               </button>
 
-              {listing.claimed && !listing.featured && (
+              {!listing.featured && (
                 <button
                   onClick={() => onGetFeatured(listing)}
                   className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-700 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-300 underline underline-offset-2"
                   id="get-featured-from-listing-link"
                 >
                   <Sparkles className="w-3.5 h-3.5" />
-                  Get Featured ($30/mo)
+                  Feature this business
                 </button>
               )}
             </div>

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShieldCheck, FileText } from 'lucide-react';
 import { motion } from 'motion/react';
+import { CONTACT_EMAIL } from '../lib/site';
+import { GUARANTEE_CONTACTS } from '../lib/pricing';
 
 interface LegalModalProps {
   isOpen: boolean;
@@ -128,7 +130,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
 
               <section>
                 <h3 className="font-bold text-sm mb-1">Contact</h3>
-                <p>Questions about this policy, or requests to access or delete your data? Contact us at [privacy@clearanestate.com] (or your current contact address until the domain email is set up).</p>
+                <p>Questions about this policy, or requests to access or delete your data? Contact us at <a href={`mailto:${CONTACT_EMAIL}`} className="underline">{CONTACT_EMAIL}</a>.</p>
               </section>
             </div>
           ) : (
@@ -163,7 +165,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
               <section>
                 <h3 className="font-bold text-sm mb-1">Featured Listing Subscriptions</h3>
                 <p>
-                  Featured Listing upgrades are billed at $30/month via Stripe and renew automatically until cancelled. You can cancel anytime through your Stripe customer portal link (sent at signup and available on request), or by emailing us at [billing@clearanestate.com]; cancellation is effective at the end of your current billing period, and you will not be charged again. All payments are processed by Stripe; we do not store your payment card details.
+                  Featured Listing upgrades are billed yearly via Stripe at the price shown when you sign up, and renew automatically each year at that same price until cancelled. The price for new sign-ups rises as more businesses join; this never changes the price of an existing, active subscription. Each city has a limited number of featured spots, and featured listings are shown in the order they signed up. You can cancel anytime by emailing us at {CONTACT_EMAIL}; cancellation is effective at the end of your current yearly billing period, and you will not be charged again. Money-back guarantee: if your featured listing receives fewer than {GUARANTEE_CONTACTS} contacts (phone taps, website clicks and estimate requests, as counted by this site) in its first 12 months, email us within 30 days of that date for a full refund of that year. All payments are processed by Stripe; we do not store your payment card details.
                 </p>
               </section>
 
@@ -195,7 +197,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
 
               <section>
                 <h3 className="font-bold text-sm mb-1">Contact</h3>
-                <p>Questions about these terms? Contact us at [legal@clearanestate.com] (or your current contact address until the domain email is set up).</p>
+                <p>Questions about these terms? Contact us at <a href={`mailto:${CONTACT_EMAIL}`} className="underline">{CONTACT_EMAIL}</a>.</p>
               </section>
             </div>
           )}

@@ -1,9 +1,10 @@
 import React from 'react';
-import { Tag, PlusCircle, Sparkles, Bookmark, Search, SlidersHorizontal, ShieldCheck, PhoneCall } from 'lucide-react';
+import { Tag, PlusCircle, Sparkles, Bookmark, ArrowRight } from 'lucide-react';
 
 interface HeaderProps {
   onOpenSubmitModal: () => void;
-  onOpenFeaturedModal: () => void;
+  onOpenAdvertise: () => void;
+  showAdvertiseBanner: boolean;
   bookmarkCount: number;
   onToggleFavoritesOnly: () => void;
   showFavoritesOnly: boolean;
@@ -11,12 +12,25 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({
   onOpenSubmitModal,
-  onOpenFeaturedModal,
+  onOpenAdvertise,
+  showAdvertiseBanner,
   bookmarkCount,
   onToggleFavoritesOnly,
   showFavoritesOnly,
 }) => {
   return (
+    <>
+    {showAdvertiseBanner && (
+      <button
+        onClick={onOpenAdvertise}
+        className="w-full bg-stone-900 dark:bg-amber-500 text-amber-300 dark:text-stone-950 text-xs font-semibold py-2 px-4 flex items-center justify-center gap-1.5 hover:bg-stone-800 dark:hover:bg-amber-400 transition-colors"
+        id="advertise-banner"
+      >
+        <Sparkles className="w-3.5 h-3.5 shrink-0" />
+        <span>Run an estate business? Get to the top of your city&rsquo;s page</span>
+        <ArrowRight className="w-3.5 h-3.5 shrink-0" />
+      </button>
+    )}
     <header className="sticky top-0 z-40 bg-amber-50/95 dark:bg-stone-950/95 backdrop-blur-md border-b-2 border-stone-200 dark:border-stone-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
         {/* Brand Title & Logo */}
@@ -61,15 +75,14 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </button>
 
-          {/* Get Featured ($30/mo) */}
+          {/* Get Featured -> /advertise */}
           <button
-            onClick={onOpenFeaturedModal}
-            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-stone-950 transition-all shadow-md hover:shadow-amber-500/20 flex items-center gap-1.5 border border-amber-400 animate-pulse"
+            onClick={onOpenAdvertise}
+            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-stone-950 transition-all shadow-md hover:shadow-amber-500/20 flex items-center gap-1.5 border border-amber-400"
             id="header-get-featured-btn"
           >
             <Sparkles className="w-4 h-4" />
             <span>Get Featured</span>
-            <span className="hidden md:inline font-mono font-normal opacity-90">($30/mo)</span>
           </button>
 
           {/* Free Submit Listing */}
@@ -84,5 +97,6 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
       </div>
     </header>
+    </>
   );
 };

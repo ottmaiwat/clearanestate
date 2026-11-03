@@ -10,6 +10,7 @@ import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, isMailConfigured } from './mailer';
 import { listingPath } from './src/lib/slug';
 import { landingPaths, parseLandingPath, citySlug, landingTitle, landingDescription } from './src/lib/locations';
+import { pricingFor, dollars, CITY_CAP } from './src/lib/pricing';
 
 dotenv.config();
 
@@ -123,14 +124,17 @@ app.post(
         console.log('Payment checkout session completed:', session.id, session.customer_details?.email);
 
         const listingId = session.metadata?.listingId;
+        const priceCents = Number(session.metadata?.priceCents) || null;
         const db = getPool();
         if (listingId && db) {
           try {
             await ensureSchema();
-            await db.query('UPDATE listings SET featured = TRUE, stripe_subscription_id = ? WHERE id = ?', [
-              typeof session.subscription === 'string' ? session.subscription : null,
-              listingId,
-            ]);
+            // featured_at = now puts this business below everyone already featured in its
+            // city, which is the "first paid, first position" promise on the advertise page.
+            await db.query(
+              'UPDATE listings SET featured = TRUE, featured_at = CURRENT_TIMESTAMP, featured_price_cents = ?, stripe_subscription_id = ? WHERE id = ?',
+              [priceCents, typeof session.subscription === 'string' ? session.subscription : null, listingId]
+            );
             console.log('Marked listing as featured after successful payment:', listingId);
           } catch (err) {
             console.error('Failed to mark listing as featured after checkout:', err);
@@ -146,7 +150,7 @@ app.post(
         if (db) {
           try {
             await ensureSchema();
-            await db.query('UPDATE listings SET featured = FALSE WHERE stripe_subscription_id = ?', [subscription.id]);
+            await db.query('UPDATE listings SET featured = FALSE, featured_at = NULL WHERE stripe_subscription_id = ?', [subscription.id]);
             console.log('Removed featured status after subscription cancellation:', subscription.id);
           } catch (err) {
             console.error('Failed to remove featured status after subscription cancellation:', err);
@@ -194,8 +198,29 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
       });
     }
 
-    const { listingTitle, listingId, returnUrl } = req.body;
-    const origin = returnUrl || req.headers.origin || process.env.APP_URL || 'http://localhost:3000';
+    const db = getPool();
+    if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+
+    const listingId = typeof req.body?.listingId === 'string' ? req.body.listingId : '';
+    await ensureSchema();
+    const [rows] = await db.query('SELECT id, name, city, state, featured FROM listings WHERE id = ?', [listingId]);
+    const listing = (rows as any[])[0];
+    if (!listing) return res.status(404).json({ error: 'Listing not found.' });
+    if (listing.featured) return res.status(409).json({ error: 'This listing is already featured.' });
+
+    const cityTaken = await cityFeaturedCount(listing.city, listing.state);
+    if (cityTaken >= CITY_CAP) {
+      return res.status(409).json({
+        error: `All ${CITY_CAP} featured spots in ${listing.city}, ${listing.state} are taken. Email us to join the waitlist.`,
+      });
+    }
+
+    // The price is always decided here, never by the browser. Stripe keeps charging the
+    // amount on the subscription at renewal, which is what locks the price in.
+    const { priceCents } = await currentPricing();
+
+    // Redirect back to our own domain only - never to an origin supplied in the request.
+    const origin = process.env.APP_URL ? SITE_URL : req.headers.origin || 'http://localhost:3000';
 
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ['card'],
@@ -204,23 +229,27 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
           price_data: {
             currency: 'usd',
             product_data: {
-              name: `Featured Listing Promotion - ${listingTitle || 'ClearAnEstate Business'}`,
-              description: 'ClearAnEstate Top Placement & Priority Directory Badge ($30/mo)',
+              name: `Featured Listing - ${listing.name} (${listing.city}, ${listing.state})`,
+              description: `Top placement on the ${listing.city} page, Featured badge, contact report. ${dollars(priceCents)}/year, price locked while subscribed.`,
             },
-            unit_amount: 3000, // $30.00
+            unit_amount: priceCents,
             recurring: {
-              interval: 'month',
+              interval: 'year',
             },
           },
           quantity: 1,
         },
       ],
       mode: 'subscription',
-      success_url: `${origin}?featured_success=true&listing_id=${listingId || ''}`,
-      cancel_url: `${origin}?featured_cancel=true`,
+      success_url: `${origin}/advertise?featured_success=true&listing_id=${encodeURIComponent(listing.id)}`,
+      cancel_url: `${origin}/advertise?listing=${encodeURIComponent(listing.id)}`,
       metadata: {
-        listingId: listingId || '',
-        listingTitle: listingTitle || '',
+        listingId: listing.id,
+        listingTitle: listing.name,
+        priceCents: String(priceCents),
+      },
+      subscription_data: {
+        metadata: { listingId: listing.id, priceCents: String(priceCents) },
       },
     });
 
@@ -270,6 +299,7 @@ function rowToListing(row: any) {
     hours: row.hours || undefined,
     claimed: !!row.claimed,
     address: row.address || undefined,
+    featuredAt: row.featured_at ? new Date(row.featured_at).toISOString() : undefined,
     createdAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString().split('T')[0]
@@ -298,6 +328,95 @@ function rowToPending(row: any) {
   };
 }
 
+// ---- Featured pricing ----
+
+// Paid sign-ups currently active - this is what moves the price up a step every 10.
+// Listings an admin featured by hand (no subscription) don't count.
+async function currentPricing() {
+  const db = getPool();
+  if (!db) return pricingFor(0);
+  await ensureSchema();
+  const [[row]] = (await db.query(
+    'SELECT COUNT(*) AS n FROM listings WHERE featured = TRUE AND stripe_subscription_id IS NOT NULL'
+  )) as any;
+  return pricingFor(Number(row?.n) || 0);
+}
+
+async function cityFeaturedCount(city: string, state: string): Promise<number> {
+  const db = getPool();
+  if (!db) return 0;
+  const [[row]] = (await db.query(
+    'SELECT COUNT(*) AS n FROM listings WHERE featured = TRUE AND city = ? AND state = ?',
+    [city, state]
+  )) as any;
+  return Number(row?.n) || 0;
+}
+
+// Public: current price, how many sign-ups are left at it, and (for a given listing) how
+// many of its city's featured spots are already taken.
+app.get('/api/pricing', async (req, res) => {
+  try {
+    const pricing = await currentPricing();
+    const db = getPool();
+    let city: { name: string; state: string; taken: number } | null = null;
+    let listingFeatured = false;
+
+    const listingId = typeof req.query.listingId === 'string' ? req.query.listingId : '';
+    if (db && listingId) {
+      const [rows] = await db.query('SELECT city, state, featured FROM listings WHERE id = ?', [listingId]);
+      const listing = (rows as any[])[0];
+      if (listing) {
+        city = { name: listing.city, state: listing.state, taken: await cityFeaturedCount(listing.city, listing.state) };
+        listingFeatured = !!listing.featured;
+      }
+    }
+
+    res.json({ ...pricing, cityCap: CITY_CAP, city, listingFeatured });
+  } catch (err: any) {
+    console.error('Error loading pricing:', err);
+    res.status(500).json({ error: 'Failed to load pricing.' });
+  }
+});
+
+// Public: last-30-day audience numbers for the advertise page. Cached for 10 minutes so a
+// busy sales page doesn't run aggregate queries on every view.
+let publicStatsCache: { at: number; data: any } | null = null;
+app.get('/api/public-stats', async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+
+  if (publicStatsCache && Date.now() - publicStatsCache.at < 10 * 60 * 1000) {
+    return res.json(publicStatsCache.data);
+  }
+
+  try {
+    await ensureSchema();
+    const [[events]] = (await db.query(
+      `SELECT COUNT(DISTINCT visitor_hash, DATE(created_at)) AS visitors,
+         SUM(event_type IN ('call', 'website')) AS contacts
+       FROM listing_events WHERE created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY)`
+    )) as any;
+    const [[quotes]] = (await db.query(
+      'SELECT COUNT(*) AS n FROM quote_requests WHERE created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL 30 DAY)'
+    )) as any;
+    const [[counts]] = (await db.query(
+      `SELECT COUNT(*) AS listings, COUNT(DISTINCT city, state) AS cities FROM listings`
+    )) as any;
+
+    const data = {
+      visitors30d: Number(events?.visitors) || 0,
+      contacts30d: (Number(events?.contacts) || 0) + (Number(quotes?.n) || 0),
+      listings: Number(counts?.listings) || 0,
+      cities: Number(counts?.cities) || 0,
+    };
+    publicStatsCache = { at: Date.now(), data };
+    res.json(data);
+  } catch (err: any) {
+    console.error('Error loading public stats:', err);
+    res.status(500).json({ error: 'Failed to load stats.' });
+  }
+});
+
 // Status check so the frontend knows whether to use the API or fall back to local demo data.
 app.get('/api/listings/status', (req, res) => {
   res.json({ configured: isDbConfigured() });
@@ -310,7 +429,7 @@ app.get('/api/listings', async (req, res) => {
 
   try {
     await ensureSchema();
-    const [rows] = await db.query('SELECT * FROM listings ORDER BY featured DESC, rating DESC');
+    const [rows] = await db.query('SELECT * FROM listings ORDER BY featured DESC, featured_at ASC, rating DESC');
     res.json((rows as any[]).map(rowToListing));
   } catch (err: any) {
     console.error('Error fetching listings:', err);
@@ -326,7 +445,7 @@ app.get('/sitemap.xml', async (req, res) => {
   res.type('application/xml');
   res.set('Cache-Control', 'public, max-age=3600');
 
-  const urls: { loc: string; lastmod?: string }[] = [{ loc: `${SITE_URL}/` }];
+  const urls: { loc: string; lastmod?: string }[] = [{ loc: `${SITE_URL}/` }, { loc: `${SITE_URL}/advertise` }];
 
   const db = getPool();
   if (db) {
@@ -754,7 +873,13 @@ app.post('/api/admin/listings/:id/toggle-featured', adminAuthLimiter, requireAdm
 
   try {
     await ensureSchema();
-    await db.query('UPDATE listings SET featured = NOT featured WHERE id = ?', [req.params.id]);
+    // Hand-featured listings join the end of the sign-up order, same as paid ones.
+    await db.query(
+      // featured_at is assigned first, from the old value of featured, so this is correct
+      // whether the server evaluates SET left to right (MySQL) or simultaneously (MariaDB option).
+      'UPDATE listings SET featured_at = IF(featured, NULL, CURRENT_TIMESTAMP), featured = NOT featured WHERE id = ?',
+      [req.params.id]
+    );
     const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [req.params.id]);
     const row = (rows as any[])[0];
     if (!row) return res.status(404).json({ error: 'Listing not found.' });
@@ -900,6 +1025,7 @@ app.get('/api/admin/subscriptions', adminAuthLimiter, requireAdmin, async (req, 
             currentPeriodEnd: periodEndUnix ? new Date(periodEndUnix * 1000).toISOString().split('T')[0] : null,
             cancelAtPeriodEnd: !!sub.cancel_at_period_end,
             amount: item?.price?.unit_amount ?? null,
+            interval: item?.price?.recurring?.interval ?? null,
           };
         } catch (err: any) {
           return { ...base, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: null, amount: null, error: err.message };
@@ -1134,6 +1260,15 @@ async function pageMeta(pathname: string): Promise<PageMeta | null> {
       title: `${row.name} - ${row.category} in ${row.city}, ${row.state} | ClearAnEstate.com`,
       description: `${row.name} - ${row.tagline || row.description || `${row.category} services in ${row.city}, ${row.state}`}`.slice(0, 160),
       canonicalPath: listingPath(row),
+    };
+  }
+
+  if (pathname.replace(/\/+$/, '') === '/advertise') {
+    const { priceCents } = await currentPricing();
+    return {
+      title: 'Get Your Estate Business Featured | ClearAnEstate.com',
+      description: `Put your estate cleanout, senior move or estate sale business at the top of your city's page. ${dollars(priceCents)}/year, price locked, only ${CITY_CAP} spots per city.`,
+      canonicalPath: '/advertise',
     };
   }
 

@@ -34,6 +34,7 @@ export interface Listing {
   hours?: string;
   claimed: boolean;
   address?: string;
+  featuredAt?: string;
   createdAt: string;
   reviews?: Review[];
 }

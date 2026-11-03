@@ -184,6 +184,7 @@ export type Subscription = {
   currentPeriodEnd: string | null;
   cancelAtPeriodEnd: boolean | null;
   amount: number | null;
+  interval?: string | null;
   error?: string;
 };
 
@@ -236,4 +237,43 @@ export async function fetchTrafficStatsAdmin(password: string, days = 30): Promi
     headers: { 'x-admin-password': password },
   });
   return parseJsonOrThrow(res);
+}
+
+export type PricingInfo = {
+  priceCents: number;
+  nextPriceCents: number;
+  spotsLeftAtPrice: number;
+  paidCount: number;
+  cityCap: number;
+  city: { name: string; state: string; taken: number } | null;
+  listingFeatured: boolean;
+};
+
+export async function fetchPricing(listingId?: string): Promise<PricingInfo> {
+  const res = await fetch(`/api/pricing${listingId ? `?listingId=${encodeURIComponent(listingId)}` : ''}`);
+  return parseJsonOrThrow(res);
+}
+
+export type PublicStats = {
+  visitors30d: number;
+  contacts30d: number;
+  listings: number;
+  cities: number;
+};
+
+export async function fetchPublicStats(): Promise<PublicStats> {
+  const res = await fetch('/api/public-stats');
+  return parseJsonOrThrow(res);
+}
+
+// Starts Stripe Checkout for a listing. The server decides the price and checks the
+// city's featured cap; this only returns the Stripe URL to send the browser to.
+export async function startFeaturedCheckout(listingId: string): Promise<string> {
+  const res = await fetch('/api/stripe/create-checkout-session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ listingId }),
+  });
+  const data = await parseJsonOrThrow(res);
+  return data.url;
 }
