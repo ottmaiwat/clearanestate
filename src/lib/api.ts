@@ -130,6 +130,17 @@ export async function fetchQuoteRequestsAdmin(password: string): Promise<QuoteRe
   return parseJsonOrThrow(res);
 }
 
+export type TestEmailResult = { ok: boolean; error?: string; settings: Record<string, string> };
+
+export async function sendTestEmailAdmin(password: string, to: string): Promise<TestEmailResult> {
+  const res = await fetch('/api/admin/test-email', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-password': password },
+    body: JSON.stringify({ to }),
+  });
+  return parseJsonOrThrow(res);
+}
+
 export type ClaimRequestPayload = {
   claimantName: string;
   claimantEmail: string;

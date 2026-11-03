@@ -7,7 +7,7 @@ import Stripe from 'stripe';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import { getPool, ensureSchema, isDbConfigured } from './db';
-import { sendMail, isMailConfigured } from './mailer';
+import { sendMail, sendTestMail, isMailConfigured } from './mailer';
 import { listingPath } from './src/lib/slug';
 import { landingPaths, parseLandingPath, citySlug, landingTitle, landingDescription } from './src/lib/locations';
 import { pricingFor, dollars, CITY_CAP } from './src/lib/pricing';
@@ -1148,6 +1148,15 @@ app.get('/api/admin/quotes', adminAuthLimiter, requireAdmin, async (req, res) =>
     console.error('Error fetching quote requests:', err);
     res.status(500).json({ error: 'Failed to fetch quote requests.', details: err.message });
   }
+});
+
+// Admin: send a test email and report the exact SMTP result
+app.post('/api/admin/test-email', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const to = String(req.body?.to || '').trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return res.status(400).json({ error: 'Enter a valid email address to send the test to.' });
+  }
+  res.json(await sendTestMail(to));
 });
 
 // Admin: list claim requests

@@ -176,6 +176,10 @@ function getTransporter() {
       host: process.env.SMTP_HOST,
       port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
       secure: process.env.SMTP_SECURE === "true",
+      // Fail fast on a wrong port/SSL combination instead of hanging the request.
+      connectionTimeout: 15e3,
+      greetingTimeout: 15e3,
+      socketTimeout: 3e4,
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASSWORD
@@ -199,6 +203,33 @@ async function sendMail(opts) {
   } catch (err) {
     console.error("Failed to send email:", err);
     return false;
+  }
+}
+async function sendTestMail(to) {
+  const settings = {
+    SMTP_HOST: process.env.SMTP_HOST || "(missing)",
+    SMTP_PORT: process.env.SMTP_PORT || "(missing, using 587)",
+    SMTP_SECURE: process.env.SMTP_SECURE || "(missing, using false)",
+    SMTP_USER: process.env.SMTP_USER || "(missing)",
+    SMTP_PASSWORD: process.env.SMTP_PASSWORD ? "(set)" : "(missing)",
+    SMTP_FROM: process.env.SMTP_FROM || "(missing, using SMTP_USER)",
+    ADMIN_NOTIFICATION_EMAIL: process.env.ADMIN_NOTIFICATION_EMAIL || "(missing, no admin notifications are sent)"
+  };
+  const mailer = getTransporter();
+  if (!mailer) {
+    return { ok: false, error: "Email is switched off: SMTP_HOST, SMTP_USER and SMTP_PASSWORD must all be set.", settings };
+  }
+  try {
+    await mailer.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to,
+      subject: "ClearAnEstate test email",
+      text: "This is a test email from the ClearAnEstate admin portal. If you can read it, email sending works."
+    });
+    return { ok: true, settings };
+  } catch (err) {
+    console.error("Test email failed:", err);
+    return { ok: false, error: [err?.code, err?.response || err?.message].filter(Boolean).join(": "), settings };
   }
 }
 
@@ -1280,6 +1311,13 @@ app.get("/api/admin/quotes", adminAuthLimiter, requireAdmin, async (req, res) =>
     console.error("Error fetching quote requests:", err);
     res.status(500).json({ error: "Failed to fetch quote requests.", details: err.message });
   }
+});
+app.post("/api/admin/test-email", adminAuthLimiter, requireAdmin, async (req, res) => {
+  const to = String(req.body?.to || "").trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+    return res.status(400).json({ error: "Enter a valid email address to send the test to." });
+  }
+  res.json(await sendTestMail(to));
 });
 app.get("/api/admin/claims", adminAuthLimiter, requireAdmin, async (req, res) => {
   const db = getPool();

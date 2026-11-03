@@ -23,7 +23,7 @@ import {
   Download
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { adminLogin, BulkImportRow, BulkImportResult, Subscription } from '../lib/api';
+import { adminLogin, BulkImportRow, BulkImportResult, Subscription, sendTestEmailAdmin, TestEmailResult } from '../lib/api';
 import { listingPath } from '../lib/slug';
 import { toCsv, downloadCsv } from '../lib/csv';
 import { TrafficPanel } from './TrafficPanel';
@@ -113,6 +113,23 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
+  const [testEmailTo, setTestEmailTo] = useState('');
+  const [testEmailResult, setTestEmailResult] = useState<TestEmailResult | null>(null);
+  const [testEmailError, setTestEmailError] = useState<string | null>(null);
+  const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
+
+  const handleSendTestEmail = async () => {
+    setIsSendingTestEmail(true);
+    setTestEmailResult(null);
+    setTestEmailError(null);
+    try {
+      setTestEmailResult(await sendTestEmailAdmin(adminPassword, testEmailTo.trim()));
+    } catch (err: any) {
+      setTestEmailError(err?.message || 'Test email request failed.');
+    } finally {
+      setIsSendingTestEmail(false);
+    }
+  };
 
   const handleCopyPrompt = () => {
     navigator.clipboard.writeText(AI_IMPORT_PROMPT);
@@ -388,6 +405,41 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         {/* Quote Requests */}
         {activeTab === 'quotes' && (
           <div className="space-y-4">
+            <div className="bg-white dark:bg-stone-800 rounded-xl p-4 border border-stone-200 dark:border-stone-700" id="test-email-panel">
+              <h3 className="font-bold text-stone-900 dark:text-stone-100 flex items-center gap-2"><Mail className="w-4 h-4" /> Email check</h3>
+              <p className="text-sm text-stone-600 dark:text-stone-400 mt-1">Sends a test email using the site's email settings and shows the exact error if it fails.</p>
+              <div className="flex flex-col sm:flex-row gap-2 mt-3">
+                <input
+                  type="email"
+                  value={testEmailTo}
+                  onChange={(e) => setTestEmailTo(e.target.value)}
+                  placeholder="Send test to (your email)"
+                  className="flex-1 px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm"
+                  id="test-email-to"
+                />
+                <button
+                  onClick={handleSendTestEmail}
+                  disabled={isSendingTestEmail || !testEmailTo.trim()}
+                  className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-sm font-bold"
+                  id="send-test-email-btn"
+                >
+                  {isSendingTestEmail ? 'Sending…' : 'Send test email'}
+                </button>
+              </div>
+              {testEmailError && <p className="text-sm text-red-600 mt-3">{testEmailError}</p>}
+              {testEmailResult && (
+                <div className="mt-3 text-sm">
+                  <p className={testEmailResult.ok ? 'text-green-700 dark:text-green-400 font-bold' : 'text-red-600 font-bold'}>
+                    {testEmailResult.ok ? '✓ Sent. Check that inbox (and Spam).' : `✗ Failed: ${testEmailResult.error}`}
+                  </p>
+                  <ul className="mt-2 font-mono text-xs text-stone-600 dark:text-stone-400 space-y-0.5">
+                    {Object.entries(testEmailResult.settings).map(([name, value]) => (
+                      <li key={name}>{name}: {value}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
             <h2 className="text-2xl font-bold text-stone-900 dark:text-stone-100 mb-4">Quote Requests ({quotes.length})</h2>
             {quotes.length === 0 ? (
               <p className="text-stone-500 dark:text-stone-400">No quote requests</p>
