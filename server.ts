@@ -9,6 +9,7 @@ import rateLimit from 'express-rate-limit';
 import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, sendTestMail, isMailConfigured } from './mailer';
 import { buildReports, sendReports, previousPeriod, periodLabel, isValidPeriod } from './reports';
+import { verifyEditToken, editLinkUrl, EDIT_LINK_DAYS } from './ownerLinks';
 import { listingPath } from './src/lib/slug';
 import { badgeHtml } from './src/lib/badge';
 import { GUIDES, guidePath, parseGuidePath } from './src/lib/guides';
@@ -50,6 +51,16 @@ const submissionLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many submissions from this network. Please try again later.' },
+});
+
+// Owner listing saves: the signed edit link already proves who they are, so this only
+// stops runaway scripts while leaving room to save several times while editing.
+const ownerEditLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many saves in a short time. Please wait a few minutes and try again.' },
 });
 
 // Rate limit for admin authentication - applied to /api/admin/login AND every route
@@ -748,6 +759,16 @@ async function emailClaimApproved(claimantName: string, claimantEmail: string, l
     `${SITE_URL}${listingPath(listing)}`,
   ];
 
+  const editUrl = editLinkUrl(listing.id, claimantEmail);
+  if (editUrl) {
+    lines.push(
+      '',
+      'UPDATE YOUR LISTING',
+      `Check your phone number, website, services and hours, and add a short description. This private link works for ${EDIT_LINK_DAYS} days (you can always ask for a new one from your listing page):`,
+      editUrl
+    );
+  }
+
   if (!listing.featured) {
     const pricing = await currentPricing();
     const taken = await cityFeaturedCount(listing.city, listing.state);
@@ -828,6 +849,168 @@ app.post('/api/listings/:id/claim', submissionLimiter, async (req, res) => {
   } catch (err: any) {
     console.error('Error submitting claim request:', err);
     res.status(500).json({ error: 'Failed to submit claim request.' });
+  }
+});
+
+// Emails that may receive an edit link for a listing: an approved claim, the address the
+// business paid with, or the listing's own email. Lower-cased.
+async function trustedOwnerEmails(listingRow: any): Promise<Set<string>> {
+  const db = getPool()!;
+  const [claims] = await db.query("SELECT claimant_email FROM claim_requests WHERE listing_id = ? AND status = 'approved'", [listingRow.id]);
+  const emails = [...(claims as any[]).map((c) => c.claimant_email), listingRow.featured_email, listingRow.email];
+  return new Set(emails.filter(Boolean).map((e: string) => e.trim().toLowerCase()));
+}
+
+async function emailEditLink(listingRow: any, email: string): Promise<boolean> {
+  const url = editLinkUrl(listingRow.id, email);
+  if (!url) return false;
+  return sendMail({
+    to: email,
+    subject: `Edit your ClearAnEstate listing: ${listingRow.name}`,
+    text: [
+      'Hi,',
+      '',
+      `Here's your private link to update "${listingRow.name}" on ClearAnEstate.com: phone, website, description, services and hours.`,
+      '',
+      url,
+      '',
+      `The link works for ${EDIT_LINK_DAYS} days. Don't forward it: anyone with it can edit your listing. You can always ask for a new one from your listing page.`,
+      '',
+      "Didn't ask for this? You can ignore this email.",
+      '',
+      'ClearAnEstate.com',
+    ].join('\n'),
+  });
+}
+
+// Public: email an edit link to a listing's owner. Always answers the same way, so it
+// can't be used to find out which emails are on file.
+app.post('/api/listings/:id/edit-link', submissionLimiter, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+  const email = String(req.body?.email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Enter a valid email address.' });
+  if (isHoneypotTripped(req)) return res.json({ ok: true });
+
+  try {
+    await ensureSchema();
+    const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [req.params.id]);
+    const row = (rows as any[])[0];
+    if (row && (await trustedOwnerEmails(row)).has(email)) {
+      emailEditLink(row, email).catch((err) => console.error('Failed to email edit link:', err));
+    }
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('Error sending edit link:', err);
+    res.status(500).json({ error: 'Something went wrong. Please try again.' });
+  }
+});
+
+// Owner edits: which fields an owner may change, and how each is cleaned up. Name,
+// category and city aren't editable here because they decide the listing's URL and
+// which city/state pages it appears on.
+function cleanOwnerEdit(body: any): { values: Record<string, any>; error: string | null } {
+  const text = (v: any, max: number) => String(v ?? '').trim().slice(0, max);
+  let website = text(body.website, 255);
+  if (website && !/^https?:\/\//i.test(website)) website = `https://${website}`;
+  if (website) {
+    try {
+      new URL(website);
+    } catch {
+      return { values: {}, error: 'The website address doesn’t look right.' };
+    }
+  }
+  const email = text(body.email, 255);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { values: {}, error: 'The email address doesn’t look right.' };
+  const phone = text(body.phone, 30);
+  if (phone && !/^[0-9+().\-\s xX]+$/.test(phone)) return { values: {}, error: 'The phone number can only contain digits, spaces and + ( ) - .' };
+
+  const services = (Array.isArray(body.services) ? body.services : String(body.services ?? '').split(/\n|,/))
+    .map((s: any) => String(s).trim().slice(0, 60))
+    .filter(Boolean)
+    .slice(0, 15);
+  const years = body.yearsInBusiness === '' || body.yearsInBusiness == null ? null : Number(body.yearsInBusiness);
+  if (years !== null && (!Number.isInteger(years) || years < 0 || years > 150)) {
+    return { values: {}, error: 'Years in business should be a whole number.' };
+  }
+
+  return {
+    error: null,
+    values: {
+      phone: phone || null,
+      website,
+      email: email || null,
+      tagline: text(body.tagline, 160),
+      description: text(body.description, 2000),
+      services: JSON.stringify(services),
+      hours: text(body.hours, 255) || null,
+      address: text(body.address, 255) || null,
+      years_in_business: years,
+      insured: !!body.insured,
+      bonded: !!body.bonded,
+    },
+  };
+}
+
+// Owner: load the listing behind an edit link.
+app.get('/api/owner/listing', async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+  const access = verifyEditToken(String(req.query.token || ''));
+  if (!access) return res.status(401).json({ error: 'This edit link is invalid or has expired. Ask for a new one from your listing page.' });
+  try {
+    await ensureSchema();
+    const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [access.listingId]);
+    const row = (rows as any[])[0];
+    if (!row) return res.status(404).json({ error: 'This listing no longer exists.' });
+    res.json({ listing: rowToListing(row), editorEmail: access.email });
+  } catch (err: any) {
+    console.error('Error loading listing for owner:', err);
+    res.status(500).json({ error: 'Failed to load your listing.' });
+  }
+});
+
+// Owner: save changes from the edit page. Live immediately; the admin gets an email
+// showing exactly what changed so anything odd can be put back.
+app.post('/api/owner/listing', ownerEditLimiter, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+  const access = verifyEditToken(String(req.body?.token || ''));
+  if (!access) return res.status(401).json({ error: 'This edit link is invalid or has expired. Ask for a new one from your listing page.' });
+
+  const { values, error } = cleanOwnerEdit(req.body?.listing || {});
+  if (error) return res.status(400).json({ error });
+  if (!values.website) return res.status(400).json({ error: 'Please enter your website address.' });
+
+  try {
+    await ensureSchema();
+    const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [access.listingId]);
+    const before = (rows as any[])[0];
+    if (!before) return res.status(404).json({ error: 'This listing no longer exists.' });
+
+    const columns = Object.keys(values);
+    await db.query(
+      `UPDATE listings SET ${columns.map((c) => `${c} = ?`).join(', ')}, claimed = TRUE WHERE id = ?`,
+      [...columns.map((c) => values[c]), access.listingId]
+    );
+
+    const show = (c: string, v: any) =>
+      c === 'services' ? parseServices(v).join(', ') : c === 'insured' || c === 'bonded' ? (v ? 'yes' : 'no') : v ?? '';
+    const changes = columns
+      .filter((c) => String(show(c, before[c])) !== String(show(c, values[c])))
+      .map((c) => `${c}:\n  was: ${show(c, before[c]) || '(empty)'}\n  now: ${show(c, values[c]) || '(empty)'}`);
+    if (changes.length > 0) {
+      notifyAdmin(
+        `Listing edited by owner: ${before.name}`,
+        `${access.email} updated "${before.name}" (${before.city}, ${before.state}):\n\n${changes.join('\n\n')}\n\n${SITE_URL}${listingPath(before)}`
+      );
+    }
+
+    const [updated] = await db.query('SELECT * FROM listings WHERE id = ?', [access.listingId]);
+    res.json({ listing: rowToListing((updated as any[])[0]), changed: changes.length });
+  } catch (err: any) {
+    console.error('Error saving owner edit:', err);
+    res.status(500).json({ error: 'Failed to save your changes.' });
   }
 });
 
@@ -1353,6 +1536,8 @@ interface PageMeta {
   description: string;
   canonicalPath: string;
   notFound?: boolean;
+  // Private pages (owner edit links): served normally but kept out of search results.
+  noindex?: boolean;
 }
 
 function escapeHtml(s: string): string {
@@ -1362,7 +1547,7 @@ function escapeHtml(s: string): string {
 function applyMeta(html: string, meta: PageMeta): string {
   const title = escapeHtml(meta.title);
   const description = escapeHtml(meta.description);
-  const extra = meta.notFound
+  const extra = meta.notFound || meta.noindex
     ? '<meta name="robots" content="noindex" />'
     : `<link rel="canonical" href="${escapeHtml(SITE_URL + meta.canonicalPath)}" />\n` +
       `    <meta property="og:title" content="${title}" />\n` +
@@ -1374,6 +1559,10 @@ function applyMeta(html: string, meta: PageMeta): string {
 }
 
 async function pageMeta(pathname: string): Promise<PageMeta | null> {
+  if (pathname.replace(/\/+$/, '') === '/edit-listing') {
+    return { title: 'Edit your listing | ClearAnEstate.com', description: '', canonicalPath: '/edit-listing', noindex: true };
+  }
+
   const guide = parseGuidePath(pathname);
   if (guide) {
     return { title: `${guide.title} | ClearAnEstate.com`, description: guide.description, canonicalPath: guidePath(guide.slug) };

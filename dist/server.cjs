@@ -25,7 +25,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
-var import_crypto = __toESM(require("crypto"), 1);
+var import_crypto2 = __toESM(require("crypto"), 1);
 var import_vite = require("vite");
 var import_stripe = __toESM(require("stripe"), 1);
 var import_dotenv = __toESM(require("dotenv"), 1);
@@ -285,6 +285,45 @@ function dollars(cents) {
   return `$${Math.round(cents / 100).toLocaleString()}`;
 }
 
+// ownerLinks.ts
+var import_crypto = __toESM(require("crypto"), 1);
+var LINK_DAYS = 30;
+function secret() {
+  return process.env.EDIT_LINK_SECRET || process.env.ADMIN_PASSWORD || null;
+}
+function sign(payload, key) {
+  return import_crypto.default.createHmac("sha256", key).update(`edit-listing|${payload}`).digest("base64url");
+}
+function createEditToken(listingId, email) {
+  const key = secret();
+  if (!key) return null;
+  const expires = Math.floor(Date.now() / 1e3) + LINK_DAYS * 24 * 60 * 60;
+  const payload = Buffer.from(JSON.stringify({ l: listingId, e: email, x: expires })).toString("base64url");
+  return `${payload}.${sign(payload, key)}`;
+}
+function verifyEditToken(token) {
+  const key = secret();
+  if (!key || typeof token !== "string") return null;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const expected = Buffer.from(sign(payload, key));
+  const given = Buffer.from(sig);
+  if (expected.length !== given.length || !import_crypto.default.timingSafeEqual(expected, given)) return null;
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (typeof data.l !== "string" || typeof data.e !== "string" || typeof data.x !== "number") return null;
+    if (data.x < Date.now() / 1e3) return null;
+    return { listingId: data.l, email: data.e };
+  } catch {
+    return null;
+  }
+}
+function editLinkUrl(listingId, email) {
+  const token = createEditToken(listingId, email);
+  return token ? `${SITE_URL}/edit-listing?token=${encodeURIComponent(token)}` : null;
+}
+var EDIT_LINK_DAYS = LINK_DAYS;
+
 // reports.ts
 var MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 function isValidPeriod(period) {
@@ -403,7 +442,7 @@ async function buildReports(period, stripe) {
   }
   return reports;
 }
-function reportEmailText(report, period, listingUrl) {
+function reportEmailText(report, period, listingUrl, editUrl) {
   const { numbers } = report;
   const partial = report.from !== periodRange(period).start;
   const lines = [
@@ -433,6 +472,7 @@ function reportEmailText(report, period, listingUrl) {
   lines.push(
     "",
     `Your listing: ${listingUrl}`,
+    ...editUrl ? [`Update your phone, services, hours or description: ${editUrl}`] : [],
     "",
     "Phone taps count people who tapped your number on our site. Calls from people who typed your number in by hand are not included, so your real number is likely higher.",
     "",
@@ -455,7 +495,7 @@ async function sendReports(period, stripe) {
     const ok = await sendMail({
       to: report.recipient,
       subject: `Your ClearAnEstate results for ${periodLabel(period)}`,
-      text: reportEmailText(report, period, listingUrl)
+      text: reportEmailText(report, period, listingUrl, editLinkUrl(report.listingId, report.recipient))
     });
     if (ok) {
       await db.query("INSERT IGNORE INTO monthly_reports (listing_id, period, sent_to) VALUES (?, ?, ?)", [report.listingId, period, report.recipient]);
@@ -788,6 +828,13 @@ var submissionLimiter = (0, import_express_rate_limit.default)({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many submissions from this network. Please try again later." }
+});
+var ownerEditLimiter = (0, import_express_rate_limit.default)({
+  windowMs: 15 * 60 * 1e3,
+  limit: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many saves in a short time. Please wait a few minutes and try again." }
 });
 var adminAuthLimiter = (0, import_express_rate_limit.default)({
   windowMs: 15 * 60 * 1e3,
@@ -1158,7 +1205,7 @@ var trackLimiter = (0, import_express_rate_limit.default)({
 });
 function visitorHash(req) {
   const day = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  return import_crypto.default.createHash("sha256").update(`${day}|${process.env.ADMIN_PASSWORD || ""}|${req.ip}|${req.get("user-agent") || ""}`).digest("hex").slice(0, 16);
+  return import_crypto2.default.createHash("sha256").update(`${day}|${process.env.ADMIN_PASSWORD || ""}|${req.ip}|${req.get("user-agent") || ""}`).digest("hex").slice(0, 16);
 }
 app.post("/api/track", trackLimiter, async (req, res) => {
   res.status(204).end();
@@ -1363,6 +1410,15 @@ async function emailClaimApproved(claimantName, claimantEmail, listingRow) {
     `Your claim of "${listing.name}" on ClearAnEstate.com is approved. Your listing:`,
     `${SITE_URL2}${listingPath(listing)}`
   ];
+  const editUrl = editLinkUrl(listing.id, claimantEmail);
+  if (editUrl) {
+    lines.push(
+      "",
+      "UPDATE YOUR LISTING",
+      `Check your phone number, website, services and hours, and add a short description. This private link works for ${EDIT_LINK_DAYS} days (you can always ask for a new one from your listing page):`,
+      editUrl
+    );
+  }
   if (!listing.featured) {
     const pricing = await currentPricing();
     const taken = await cityFeaturedCount(listing.city, listing.state);
@@ -1432,6 +1488,144 @@ Review it in the Admin Portal's Claim Requests tab.`
   } catch (err) {
     console.error("Error submitting claim request:", err);
     res.status(500).json({ error: "Failed to submit claim request." });
+  }
+});
+async function trustedOwnerEmails(listingRow) {
+  const db = getPool();
+  const [claims] = await db.query("SELECT claimant_email FROM claim_requests WHERE listing_id = ? AND status = 'approved'", [listingRow.id]);
+  const emails = [...claims.map((c) => c.claimant_email), listingRow.featured_email, listingRow.email];
+  return new Set(emails.filter(Boolean).map((e) => e.trim().toLowerCase()));
+}
+async function emailEditLink(listingRow, email) {
+  const url = editLinkUrl(listingRow.id, email);
+  if (!url) return false;
+  return sendMail({
+    to: email,
+    subject: `Edit your ClearAnEstate listing: ${listingRow.name}`,
+    text: [
+      "Hi,",
+      "",
+      `Here's your private link to update "${listingRow.name}" on ClearAnEstate.com: phone, website, description, services and hours.`,
+      "",
+      url,
+      "",
+      `The link works for ${EDIT_LINK_DAYS} days. Don't forward it: anyone with it can edit your listing. You can always ask for a new one from your listing page.`,
+      "",
+      "Didn't ask for this? You can ignore this email.",
+      "",
+      "ClearAnEstate.com"
+    ].join("\n")
+  });
+}
+app.post("/api/listings/:id/edit-link", submissionLimiter, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: "Database is not configured on server." });
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
+  if (isHoneypotTripped(req)) return res.json({ ok: true });
+  try {
+    await ensureSchema();
+    const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [req.params.id]);
+    const row = rows[0];
+    if (row && (await trustedOwnerEmails(row)).has(email)) {
+      emailEditLink(row, email).catch((err) => console.error("Failed to email edit link:", err));
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error sending edit link:", err);
+    res.status(500).json({ error: "Something went wrong. Please try again." });
+  }
+});
+function cleanOwnerEdit(body) {
+  const text = (v, max) => String(v ?? "").trim().slice(0, max);
+  let website = text(body.website, 255);
+  if (website && !/^https?:\/\//i.test(website)) website = `https://${website}`;
+  if (website) {
+    try {
+      new URL(website);
+    } catch {
+      return { values: {}, error: "The website address doesn\u2019t look right." };
+    }
+  }
+  const email = text(body.email, 255);
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { values: {}, error: "The email address doesn\u2019t look right." };
+  const phone = text(body.phone, 30);
+  if (phone && !/^[0-9+().\-\s xX]+$/.test(phone)) return { values: {}, error: "The phone number can only contain digits, spaces and + ( ) - ." };
+  const services = (Array.isArray(body.services) ? body.services : String(body.services ?? "").split(/\n|,/)).map((s) => String(s).trim().slice(0, 60)).filter(Boolean).slice(0, 15);
+  const years = body.yearsInBusiness === "" || body.yearsInBusiness == null ? null : Number(body.yearsInBusiness);
+  if (years !== null && (!Number.isInteger(years) || years < 0 || years > 150)) {
+    return { values: {}, error: "Years in business should be a whole number." };
+  }
+  return {
+    error: null,
+    values: {
+      phone: phone || null,
+      website,
+      email: email || null,
+      tagline: text(body.tagline, 160),
+      description: text(body.description, 2e3),
+      services: JSON.stringify(services),
+      hours: text(body.hours, 255) || null,
+      address: text(body.address, 255) || null,
+      years_in_business: years,
+      insured: !!body.insured,
+      bonded: !!body.bonded
+    }
+  };
+}
+app.get("/api/owner/listing", async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: "Database is not configured on server." });
+  const access = verifyEditToken(String(req.query.token || ""));
+  if (!access) return res.status(401).json({ error: "This edit link is invalid or has expired. Ask for a new one from your listing page." });
+  try {
+    await ensureSchema();
+    const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [access.listingId]);
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: "This listing no longer exists." });
+    res.json({ listing: rowToListing(row), editorEmail: access.email });
+  } catch (err) {
+    console.error("Error loading listing for owner:", err);
+    res.status(500).json({ error: "Failed to load your listing." });
+  }
+});
+app.post("/api/owner/listing", ownerEditLimiter, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: "Database is not configured on server." });
+  const access = verifyEditToken(String(req.body?.token || ""));
+  if (!access) return res.status(401).json({ error: "This edit link is invalid or has expired. Ask for a new one from your listing page." });
+  const { values, error } = cleanOwnerEdit(req.body?.listing || {});
+  if (error) return res.status(400).json({ error });
+  if (!values.website) return res.status(400).json({ error: "Please enter your website address." });
+  try {
+    await ensureSchema();
+    const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [access.listingId]);
+    const before = rows[0];
+    if (!before) return res.status(404).json({ error: "This listing no longer exists." });
+    const columns = Object.keys(values);
+    await db.query(
+      `UPDATE listings SET ${columns.map((c) => `${c} = ?`).join(", ")}, claimed = TRUE WHERE id = ?`,
+      [...columns.map((c) => values[c]), access.listingId]
+    );
+    const show = (c, v) => c === "services" ? parseServices(v).join(", ") : c === "insured" || c === "bonded" ? v ? "yes" : "no" : v ?? "";
+    const changes = columns.filter((c) => String(show(c, before[c])) !== String(show(c, values[c]))).map((c) => `${c}:
+  was: ${show(c, before[c]) || "(empty)"}
+  now: ${show(c, values[c]) || "(empty)"}`);
+    if (changes.length > 0) {
+      notifyAdmin(
+        `Listing edited by owner: ${before.name}`,
+        `${access.email} updated "${before.name}" (${before.city}, ${before.state}):
+
+${changes.join("\n\n")}
+
+${SITE_URL2}${listingPath(before)}`
+      );
+    }
+    const [updated] = await db.query("SELECT * FROM listings WHERE id = ?", [access.listingId]);
+    res.json({ listing: rowToListing(updated[0]), changed: changes.length });
+  } catch (err) {
+    console.error("Error saving owner edit:", err);
+    res.status(500).json({ error: "Failed to save your changes." });
   }
 });
 app.post("/api/admin/login", adminAuthLimiter, (req, res) => {
@@ -1752,11 +1946,11 @@ app.post("/api/admin/reports/send", adminAuthLimiter, requireAdmin, async (req, 
   }
 });
 app.get("/api/cron/monthly-reports", adminAuthLimiter, async (req, res) => {
-  const secret = process.env.CRON_SECRET;
-  if (!secret) return res.status(503).json({ error: "CRON_SECRET is not set on the server." });
+  const secret2 = process.env.CRON_SECRET;
+  if (!secret2) return res.status(503).json({ error: "CRON_SECRET is not set on the server." });
   const given = Buffer.from(String(req.query.key || ""));
-  const expected = Buffer.from(secret);
-  if (given.length !== expected.length || !import_crypto.default.timingSafeEqual(given, expected)) {
+  const expected = Buffer.from(secret2);
+  if (given.length !== expected.length || !import_crypto2.default.timingSafeEqual(given, expected)) {
     return res.status(401).json({ error: "Wrong key." });
   }
   try {
@@ -1862,7 +2056,7 @@ function escapeHtml(s) {
 function applyMeta(html, meta) {
   const title = escapeHtml(meta.title);
   const description = escapeHtml(meta.description);
-  const extra = meta.notFound ? '<meta name="robots" content="noindex" />' : `<link rel="canonical" href="${escapeHtml(SITE_URL2 + meta.canonicalPath)}" />
+  const extra = meta.notFound || meta.noindex ? '<meta name="robots" content="noindex" />' : `<link rel="canonical" href="${escapeHtml(SITE_URL2 + meta.canonicalPath)}" />
     <meta property="og:title" content="${title}" />
     <meta property="og:description" content="${description}" />
     <meta property="og:url" content="${escapeHtml(SITE_URL2 + meta.canonicalPath)}" />`;
@@ -1870,6 +2064,9 @@ function applyMeta(html, meta) {
     ${extra}`).replace(/<meta name="description" content="[^"]*"\s*\/?>/, `<meta name="description" content="${description}" />`);
 }
 async function pageMeta(pathname) {
+  if (pathname.replace(/\/+$/, "") === "/edit-listing") {
+    return { title: "Edit your listing | ClearAnEstate.com", description: "", canonicalPath: "/edit-listing", noindex: true };
+  }
   const guide = parseGuidePath(pathname);
   if (guide) {
     return { title: `${guide.title} | ClearAnEstate.com`, description: guide.description, canonicalPath: guidePath(guide.slug) };

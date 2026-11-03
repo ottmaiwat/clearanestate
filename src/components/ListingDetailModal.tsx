@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BadgeCode } from './BadgeCode';
+import { EditLinkRequest } from './EditLinkRequest';
 
 interface ListingDetailModalProps {
   listing: Listing | null;
@@ -40,9 +41,11 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   // The page title/description for an open listing is set by App (see pageMeta there).
   const listingId = listing?.id;
   const [showBadge, setShowBadge] = useState(false);
+  const [showEditRequest, setShowEditRequest] = useState(false);
   useEffect(() => {
     if (listingId) trackEvent('listing_view', listingId);
     setShowBadge(false);
+    setShowEditRequest(false);
   }, [listingId]);
 
   if (!listing) return null;
@@ -276,6 +279,12 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
             )}
           </div>
 
+          {showEditRequest && (
+            <div className="px-6 pb-4">
+              <EditLinkRequest listingId={listing.id} />
+            </div>
+          )}
+
           {showBadge && (
             <div className="px-6 pb-4">
               <BadgeCode listing={listing} />
@@ -286,12 +295,12 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
           <div className="p-4 bg-stone-100 dark:bg-stone-800/90 border-t border-stone-200 dark:border-stone-700 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <button
-                onClick={() => onClaim(listing)}
+                onClick={() => (listing.claimed ? setShowEditRequest((v) => !v) : onClaim(listing))}
                 className="inline-flex items-center gap-1.5 text-xs font-semibold text-stone-600 dark:text-stone-300 hover:text-amber-600 dark:hover:text-amber-400 underline underline-offset-2"
                 id="claim-this-listing-link"
               >
                 <UserCheck className="w-3.5 h-3.5" />
-                {listing.claimed ? 'Claimed Business Owner' : 'Is this your business? Claim it free'}
+                {listing.claimed ? 'Owner? Edit this listing' : 'Is this your business? Claim it free'}
               </button>
 
               {listing.claimed && (

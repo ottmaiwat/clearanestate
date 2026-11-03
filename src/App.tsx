@@ -23,6 +23,7 @@ import { ListingDetailModal } from './components/ListingDetailModal';
 import { SubmitListingModal } from './components/SubmitListingModal';
 import { AdvertisePage } from './components/AdvertisePage';
 import { GuidePage } from './components/GuidePage';
+import { EditListingPage } from './components/EditListingPage';
 import { HomeStats, BrowseByService, GuidesSection } from './components/HomeSections';
 import { parseGuidePath, guidePath } from './lib/guides';
 import { AdminPage } from './components/AdminPage';
@@ -149,6 +150,7 @@ export default function App() {
   // from the URL so each one is its own real, indexable page.
   const isAdvertisePage = backgroundPath.replace(/\/+$/, '') === '/advertise';
   const guide = parseGuidePath(backgroundPath);
+  const isEditListingPage = backgroundPath.replace(/\/+$/, '') === '/edit-listing';
   const landing = parseLandingPath(backgroundPath);
   const landingListings = landing
     ? listings.filter(
@@ -177,6 +179,8 @@ export default function App() {
         description: landingDescription(landing, landingCityName, landingListings.length),
         path: backgroundPath.toLowerCase().replace(/\/+$/, ''),
       }
+    : isEditListingPage
+    ? { title: 'Edit your listing | ClearAnEstate.com', description: '', path: '/edit-listing' }
     : guide
     ? {
         title: `${guide.title} | ClearAnEstate.com`,
@@ -612,6 +616,8 @@ export default function App() {
 
         {isAdvertisePage ? (
           <AdvertisePage listings={listings} />
+        ) : isEditListingPage ? (
+          <EditListingPage onSaved={(updated) => setListings((prev) => prev.map((l) => (l.id === updated.id ? updated : l)))} />
         ) : guide ? (
           <GuidePage guide={guide} />
         ) : (
@@ -921,8 +927,9 @@ export default function App() {
         initialTab={legalModal.tab}
       />
 
-      {/* The advertise page renders its own share button above its sticky pricing bar. */}
-      {!isAdvertisePage && (
+      {/* The advertise page renders its own share button above its sticky pricing bar. The
+          owner edit page has none: its address contains the private edit link. */}
+      {!isAdvertisePage && !isEditListingPage && (
         <div className="fixed bottom-4 right-4 z-30">
           <ShareButton />
         </div>

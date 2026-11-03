@@ -324,3 +324,40 @@ export async function sendReportsAdmin(
   });
   return parseJsonOrThrow(res);
 }
+
+export async function requestEditLink(listingId: string, email: string, hp?: string): Promise<{ ok: true }> {
+  const res = await fetch(`/api/listings/${encodeURIComponent(listingId)}/edit-link`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, hp }),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function fetchOwnerListing(token: string): Promise<{ listing: Listing; editorEmail: string }> {
+  const res = await fetch(`/api/owner/listing?token=${encodeURIComponent(token)}`);
+  return parseJsonOrThrow(res);
+}
+
+export type OwnerListingEdit = {
+  phone: string;
+  website: string;
+  email: string;
+  tagline: string;
+  description: string;
+  services: string[];
+  hours: string;
+  address: string;
+  yearsInBusiness: string;
+  insured: boolean;
+  bonded: boolean;
+};
+
+export async function saveOwnerListing(token: string, listing: OwnerListingEdit): Promise<{ listing: Listing; changed: number }> {
+  const res = await fetch('/api/owner/listing', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, listing }),
+  });
+  return parseJsonOrThrow(res);
+}

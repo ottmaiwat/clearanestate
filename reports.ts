@@ -4,6 +4,7 @@ import { sendMail } from './mailer';
 import { listingPath } from './src/lib/slug';
 import { SITE_URL } from './src/lib/site';
 import { GUARANTEE_CONTACTS } from './src/lib/pricing';
+import { editLinkUrl } from './ownerLinks';
 
 // Monthly results emails for featured listings: what their listing got from this site
 // last month. This is the main reason a business renews, and the evidence behind the
@@ -173,7 +174,7 @@ export async function buildReports(period: string, stripe: Stripe | null): Promi
   return reports;
 }
 
-export function reportEmailText(report: ListingReport, period: string, listingUrl: string): string {
+export function reportEmailText(report: ListingReport, period: string, listingUrl: string, editUrl?: string | null): string {
   const { numbers } = report;
   const partial = report.from !== periodRange(period).start;
   const lines = [
@@ -207,6 +208,7 @@ export function reportEmailText(report: ListingReport, period: string, listingUr
   lines.push(
     '',
     `Your listing: ${listingUrl}`,
+    ...(editUrl ? [`Update your phone, services, hours or description: ${editUrl}`] : []),
     '',
     'Phone taps count people who tapped your number on our site. Calls from people who typed your number in by hand are not included, so your real number is likely higher.',
     '',
@@ -232,7 +234,7 @@ export async function sendReports(period: string, stripe: Stripe | null): Promis
     const ok = await sendMail({
       to: report.recipient,
       subject: `Your ClearAnEstate results for ${periodLabel(period)}`,
-      text: reportEmailText(report, period, listingUrl),
+      text: reportEmailText(report, period, listingUrl, editLinkUrl(report.listingId, report.recipient)),
     });
     if (ok) {
       await db.query('INSERT IGNORE INTO monthly_reports (listing_id, period, sent_to) VALUES (?, ?, ?)', [report.listingId, period, report.recipient]);

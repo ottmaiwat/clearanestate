@@ -120,7 +120,7 @@ export const ClaimModal: React.FC<ClaimModalProps> = ({
               <>
                 <h3 className="text-xl font-serif font-bold">Claim Approved!</h3>
                 <p className="text-xs text-stone-600 dark:text-stone-300 max-w-sm mx-auto">
-                  Your email domain matched <strong>{listing.name}</strong>'s listed website, so your claim was verified automatically. The listing is now marked "Claimed Pro".
+                  Your email domain matched <strong>{listing.name}</strong>'s listed website, so your claim was verified automatically. We&rsquo;ve emailed you a private link to update your phone, services, hours and description.
                 </p>
               </>
             )}
