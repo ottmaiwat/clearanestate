@@ -1,5 +1,6 @@
 import React from 'react';
 import { Tag, PlusCircle, Sparkles, Bookmark, ArrowRight } from 'lucide-react';
+import { ThemeToggle } from './ThemeToggle';
 
 interface HeaderProps {
   onOpenSubmitModal: () => void;
@@ -57,6 +58,8 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
+          <ThemeToggle />
+
           {/* Bookmark Filter */}
           <button
             onClick={onToggleFavoritesOnly}

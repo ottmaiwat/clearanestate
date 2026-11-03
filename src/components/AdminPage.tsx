@@ -27,6 +27,7 @@ import { adminLogin, BulkImportRow, BulkImportResult, Subscription, sendTestEmai
 import { listingPath } from '../lib/slug';
 import { toCsv, downloadCsv } from '../lib/csv';
 import { TrafficPanel } from './TrafficPanel';
+import { ThemeToggle } from './ThemeToggle';
 
 const CATEGORIES = [
   'Estate Cleanouts',
@@ -281,6 +282,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           </div>
           <div className="flex items-center gap-4">
             {dbConfigured && <span className="text-sm text-green-600 font-bold">Database Connected</span>}
+            <ThemeToggle />
             <button
               onClick={onLogout}
               className="flex items-center gap-2 px-4 py-2 rounded-xl bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-200 hover:bg-red-200 dark:hover:bg-red-900/50 transition-colors font-bold"
