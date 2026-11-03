@@ -1,6 +1,7 @@
 import React from 'react';
 import { Tag, PlusCircle, Sparkles, Bookmark, ArrowRight } from 'lucide-react';
 import { ThemeToggle } from './ThemeToggle';
+import { Link } from 'react-router-dom';
 
 interface HeaderProps {
   onOpenSubmitModal: () => void;
@@ -35,7 +36,7 @@ export const Header: React.FC<HeaderProps> = ({
     <header className="sticky top-0 z-40 bg-amber-50/95 dark:bg-stone-950/95 backdrop-blur-md border-b-2 border-stone-200 dark:border-stone-800 transition-colors">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4">
         {/* Brand Title & Logo */}
-        <div className="flex items-center gap-3">
+        <Link to="/" className="flex items-center gap-3 rounded-2xl focus-visible:outline-2 focus-visible:outline-amber-500" title="ClearAnEstate home" id="header-home-link">
           <div className="relative flex items-center justify-center w-11 h-11 rounded-2xl bg-amber-500 text-stone-950 font-serif font-black text-xl shadow-md border-2 border-amber-600 rotate-1 transform hover:rotate-0 transition-transform">
             <Tag className="w-6 h-6 stroke-[2.5]" />
             <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-stone-900 border-2 border-amber-400 rounded-full" />
@@ -54,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
               Verified Estate Cleanouts, Senior Downsizing & Liquidation Pros
             </p>
           </div>
-        </div>
+        </Link>
 
         {/* Action Buttons */}
         <div className="flex items-center gap-2.5 sm:gap-3 flex-wrap">
