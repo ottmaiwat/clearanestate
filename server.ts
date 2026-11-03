@@ -10,6 +10,7 @@ import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, sendTestMail, isMailConfigured } from './mailer';
 import { listingPath } from './src/lib/slug';
 import { badgeHtml } from './src/lib/badge';
+import { GUIDES, guidePath, parseGuidePath } from './src/lib/guides';
 import { landingPaths, parseLandingPath, citySlug, landingTitle, landingDescription } from './src/lib/locations';
 import { pricingFor, dollars, CITY_CAP } from './src/lib/pricing';
 
@@ -446,7 +447,11 @@ app.get('/sitemap.xml', async (req, res) => {
   res.type('application/xml');
   res.set('Cache-Control', 'public, max-age=3600');
 
-  const urls: { loc: string; lastmod?: string }[] = [{ loc: `${SITE_URL}/` }, { loc: `${SITE_URL}/advertise` }];
+  const urls: { loc: string; lastmod?: string }[] = [
+    { loc: `${SITE_URL}/` },
+    { loc: `${SITE_URL}/advertise` },
+    ...GUIDES.map((g) => ({ loc: `${SITE_URL}${guidePath(g.slug)}` })),
+  ];
 
   const db = getPool();
   if (db) {
@@ -1307,6 +1312,11 @@ function applyMeta(html: string, meta: PageMeta): string {
 }
 
 async function pageMeta(pathname: string): Promise<PageMeta | null> {
+  const guide = parseGuidePath(pathname);
+  if (guide) {
+    return { title: `${guide.title} | ClearAnEstate.com`, description: guide.description, canonicalPath: guidePath(guide.slug) };
+  }
+
   const db = getPool();
   if (!db) return null;
 
@@ -1336,8 +1346,12 @@ async function pageMeta(pathname: string): Promise<PageMeta | null> {
   if (!landing) return null;
 
   await ensureSchema();
-  const params: any[] = [landing.stateCode];
-  let sql = 'SELECT city FROM listings WHERE state = ?';
+  const params: any[] = [];
+  let sql = 'SELECT city FROM listings WHERE 1 = 1';
+  if (landing.stateCode) {
+    sql += ' AND state = ?';
+    params.push(landing.stateCode);
+  }
   if (landing.service.category) {
     sql += ' AND category = ?';
     params.push(landing.service.category);

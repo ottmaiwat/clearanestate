@@ -14,6 +14,7 @@ import {
   citySlug,
   serviceForCategory,
   ALL_SERVICES_SLUG,
+  servicePath,
 } from './lib/locations';
 import { LocationLinks } from './components/LocationLinks';
 import { Header } from './components/Header';
@@ -21,6 +22,9 @@ import { PriceTagCard } from './components/PriceTagCard';
 import { ListingDetailModal } from './components/ListingDetailModal';
 import { SubmitListingModal } from './components/SubmitListingModal';
 import { AdvertisePage } from './components/AdvertisePage';
+import { GuidePage } from './components/GuidePage';
+import { HomeStats, BrowseByService, GuidesSection } from './components/HomeSections';
+import { parseGuidePath, guidePath } from './lib/guides';
 import { AdminPage } from './components/AdminPage';
 import { ClaimModal } from './components/ClaimModal';
 import { QuoteModal } from './components/QuoteModal';
@@ -140,11 +144,12 @@ export default function App() {
   // State / city / service landing pages (/estate-cleanouts/missouri/kansas-city), derived
   // from the URL so each one is its own real, indexable page.
   const isAdvertisePage = backgroundPath.replace(/\/+$/, '') === '/advertise';
+  const guide = parseGuidePath(backgroundPath);
   const landing = parseLandingPath(backgroundPath);
   const landingListings = landing
     ? listings.filter(
         (l) =>
-          l.state === landing.stateCode &&
+          (!landing.stateCode || l.state === landing.stateCode) &&
           (!landing.service.category || l.category === landing.service.category) &&
           (!landing.citySlug || citySlug(l.city) === landing.citySlug)
       )
@@ -168,6 +173,12 @@ export default function App() {
         description: landingDescription(landing, landingCityName, landingListings.length),
         path: backgroundPath.toLowerCase().replace(/\/+$/, ''),
       }
+    : guide
+    ? {
+        title: `${guide.title} | ClearAnEstate.com`,
+        description: guide.description,
+        path: guidePath(guide.slug),
+      }
     : isAdvertisePage
     ? {
         title: 'Get Your Estate Business Featured | ClearAnEstate.com',
@@ -180,6 +191,7 @@ export default function App() {
   // The same place (state, or state + city) under a different service.
   const landingPathFor = (serviceSlug: string) => {
     if (!landing) return '/';
+    if (!landing.stateCode) return servicePath(serviceSlug);
     if (!landing.citySlug) return statePath(landing.stateCode, serviceSlug);
     return `/${serviceSlug}/${stateSlug(landing.stateCode)}/${landing.citySlug}`;
   };
@@ -586,6 +598,8 @@ export default function App() {
 
         {isAdvertisePage ? (
           <AdvertisePage listings={listings} />
+        ) : guide ? (
+          <GuidePage guide={guide} />
         ) : (
         <>
         {/* Hero Section styled as Estate Sale Price Tag Theme */}
@@ -596,9 +610,13 @@ export default function App() {
                 <nav aria-label="Breadcrumb" className="flex flex-wrap items-center justify-center gap-1.5 text-xs font-semibold text-stone-500">
                   <Link to="/" className="hover:text-amber-700">Home</Link>
                   <span>›</span>
-                  <Link to={statePath(landing.stateCode, landing.service.slug)} className="hover:text-amber-700">
-                    {stateName(landing.stateCode)}
-                  </Link>
+                  {landing.stateCode ? (
+                    <Link to={statePath(landing.stateCode, landing.service.slug)} className="hover:text-amber-700">
+                      {stateName(landing.stateCode)}
+                    </Link>
+                  ) : (
+                    <span className="text-stone-700 dark:text-stone-300">{landing.service.label}</span>
+                  )}
                   {landingCityName && (
                     <>
                       <span>›</span>
@@ -608,12 +626,12 @@ export default function App() {
                 </nav>
 
                 <HeroHeadingTag className="text-3xl sm:text-5xl font-serif font-black tracking-tight text-stone-900 dark:text-stone-50 leading-tight">
-                  {landingListings.length > 0 ? landingTitle(landing, landingCityName) : `${landing.service.plural} in ${stateName(landing.stateCode)}`}
+                  {landingListings.length > 0 || !landing.stateCode ? landingTitle(landing, landingCityName) : `${landing.service.plural} in ${stateName(landing.stateCode)}`}
                 </HeroHeadingTag>
 
                 <p className="text-sm sm:text-base text-stone-600 dark:text-stone-300 max-w-2xl mx-auto font-serif">
                   {landingListings.length > 0
-                    ? `${landingListings.length} local ${landingListings.length === 1 ? 'company' : 'companies'} listed. Compare services, then call, visit their website, or request a free estimate. Free to use, no sign-up.`
+                    ? `${landingListings.length} ${landing.stateCode ? 'local ' : ''}${landingListings.length === 1 ? 'company' : 'companies'} listed${landing.stateCode ? '' : '. Pick your state below to see the ones near you'}. Compare services, then call, visit their website, or request a free estimate. Free to use, no sign-up.`
                     : 'We don’t have listings for this area yet. Browse nearby areas below, or add your business for free.'}
                 </p>
               </>
@@ -651,12 +669,12 @@ export default function App() {
               {/* State Filter Dropdown */}
               <div className="w-full sm:w-44">
                 <select
-                  value={landing ? landing.stateCode : filters.state}
+                  value={landing ? landing.stateCode ?? 'All States' : filters.state}
                   onChange={(e) => {
                     const value = e.target.value;
                     if (value === 'All States') {
                       setFilters({ ...filters, state: value });
-                      if (landing) navigate('/');
+                      if (landing) navigate(servicePath(landing.service.slug));
                     } else {
                       // Picking a state opens that state's own page.
                       navigate(statePath(value, landing?.service.slug));
@@ -692,8 +710,11 @@ export default function App() {
                 </button>
               )}
             </div>
+            {!landing && <HomeStats listings={listings} />}
           </div>
         </section>
+
+        {!landing && <BrowseByService listings={listings} />}
 
         {/* Categories Bar & Grid Section */}
         <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8" id="search-anchor">
@@ -818,6 +839,7 @@ export default function App() {
         </main>
 
         <LocationLinks listings={listings} landing={landing} cityName={landingCityName} />
+        {!landing && <GuidesSection />}
         </>
         )}
       </div>

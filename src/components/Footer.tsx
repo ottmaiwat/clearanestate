@@ -1,5 +1,8 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { ShieldCheck, Tag, Sparkles, Building, Lock } from 'lucide-react';
+import { SERVICES, servicePath } from '../lib/locations';
+import { GUIDES, guidePath } from '../lib/guides';
 
 interface FooterProps {
   onOpenAdmin: () => void;
@@ -71,22 +74,30 @@ export const Footer: React.FC<FooterProps> = ({
               Directory Categories
             </h4>
             <ul className="space-y-1.5 text-stone-400">
-              <li>Whole-House Estate Cleanouts</li>
-              <li>Senior Move Management (NASMM)</li>
-              <li>Junk Removal & Hauling</li>
-              <li>Liquidation & Estate Sales</li>
-              <li>Content Appraisal & Buyouts</li>
+              {SERVICES.filter((s) => s.category).map((s) => (
+                <li key={s.slug}>
+                  <Link to={servicePath(s.slug)} className="hover:text-amber-400 transition-colors">
+                    {s.label}
+                  </Link>
+                </li>
+              ))}
             </ul>
           </div>
 
-          {/* Col 4: SEO Note */}
+          {/* Col 4: Guides */}
           <div>
             <h4 className="font-serif font-bold text-stone-100 text-sm mb-3 uppercase tracking-wider text-amber-500">
-              SEO & Executor Guidance
+              Guides for Families
             </h4>
-            <p className="text-stone-400 text-xs leading-relaxed">
-              When liquidating an estate, verify provider insurance and bond status before signing contract terms. Itemized donation receipts reduce tax liabilities for estate heirs.
-            </p>
+            <ul className="space-y-1.5 text-stone-400">
+              {GUIDES.map((g) => (
+                <li key={g.slug}>
+                  <Link to={guidePath(g.slug)} className="hover:text-amber-400 transition-colors">
+                    {g.title}
+                  </Link>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
 

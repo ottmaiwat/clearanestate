@@ -11,6 +11,7 @@ import {
   statePath,
   cityPath,
   citySlug,
+  servicePath,
 } from '../lib/locations';
 
 interface LocationLinksProps {
@@ -82,6 +83,38 @@ export const LocationLinks: React.FC<LocationLinksProps> = ({ listings, landing,
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 space-y-8" id="browse-locations">
         <LinkGroup title="Popular Cities" items={cities} id="browse-cities" />
         <LinkGroup title="Browse Estate Services by State" items={states} id="browse-states" />
+      </section>
+    );
+  }
+
+  // National service page (/estate-cleanouts): that service by state and city, plus the
+  // other services' national pages.
+  if (!landing.stateCode) {
+    const inService = known.filter((l) => l.category === landing.service.category);
+    return (
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12 space-y-8" id="browse-locations">
+        <LinkGroup
+          title={`${landing.service.label} by State`}
+          items={tally(inService, (l) => l.state, (l) => stateName(l.state), (l) => statePath(l.state, landing.service.slug)).sort(byLabel)}
+          id="browse-states"
+        />
+        <LinkGroup
+          title={`Popular Cities for ${landing.service.label}`}
+          items={tally(
+            inService,
+            (l) => `${l.state}/${citySlug(l.city)}`,
+            (l) => `${l.city}, ${l.state}`,
+            (l) => cityPath(l.state, l.city, landing.service.slug)
+          ).sort(byCount).slice(0, 24)}
+          id="browse-cities"
+        />
+        <LinkGroup
+          title="Other Services"
+          items={SERVICES.filter((s) => s.category && s.slug !== landing.service.slug)
+            .map((s) => ({ to: servicePath(s.slug), label: s.label, count: known.filter((l) => l.category === s.category).length }))
+            .filter((s) => s.count > 0)}
+          id="browse-national-services"
+        />
       </section>
     );
   }

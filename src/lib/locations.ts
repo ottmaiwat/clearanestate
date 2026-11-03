@@ -58,6 +58,11 @@ export function citySlug(city: string): string {
   return slugify(city);
 }
 
+// National page for one service (/estate-cleanouts), listing every state that has it.
+export function servicePath(serviceSlug: string): string {
+  return serviceSlug === ALL_SERVICES_SLUG ? '/' : `/${serviceSlug}`;
+}
+
 export function statePath(code: string, serviceSlug: string = ALL_SERVICES_SLUG): string {
   return `/${serviceSlug}/${stateSlug(code)}`;
 }
@@ -83,6 +88,7 @@ export function landingPaths(rows: LocationRow[]): string[] {
     paths.add(statePath(row.state));
     paths.add(cityPath(row.state, row.city));
     if (service.slug !== ALL_SERVICES_SLUG) {
+      paths.add(servicePath(service.slug));
       paths.add(statePath(row.state, service.slug));
       paths.add(cityPath(row.state, row.city, service.slug));
     }
@@ -92,27 +98,38 @@ export function landingPaths(rows: LocationRow[]): string[] {
 
 export interface LandingMatch {
   service: Service;
-  stateCode: string;
+  // null on a national service page (/estate-cleanouts)
+  stateCode: string | null;
   citySlug: string | null;
 }
 
-// Parses /:service/:state[/:city]. Returns null for anything that isn't a landing page.
+// Parses /:service[/:state[/:city]]. Returns null for anything that isn't a landing page.
 export function parseLandingPath(pathname: string): LandingMatch | null {
   const parts = pathname.replace(/^\/+|\/+$/g, '').split('/');
-  if (parts.length < 2 || parts.length > 3) return null;
+  if (parts.length === 1) {
+    // The all-services national page is the homepage itself.
+    const service = serviceBySlug(parts[0]);
+    return service && service.category ? { service, stateCode: null, citySlug: null } : null;
+  }
+  if (parts.length > 3) return null;
   const service = serviceBySlug(parts[0]);
   const stateCode = stateCodeFromSlug(parts[1]);
   if (!service || !stateCode) return null;
   return { service, stateCode, citySlug: parts[2] || null };
 }
 
+function whereLabel(match: LandingMatch, cityName: string | null): string {
+  if (!match.stateCode) return 'the U.S.';
+  return cityName ? `${cityName}, ${match.stateCode}` : stateName(match.stateCode);
+}
+
 export function landingTitle(match: LandingMatch, cityName: string | null): string {
-  const where = cityName ? `${cityName}, ${match.stateCode}` : stateName(match.stateCode);
-  return `${match.service.plural} in ${where}`;
+  if (!match.stateCode) return `${match.service.plural} Across the U.S.`;
+  return `${match.service.plural} in ${whereLabel(match, cityName)}`;
 }
 
 export function landingDescription(match: LandingMatch, cityName: string | null, count: number): string {
-  const where = cityName ? `${cityName}, ${match.stateCode}` : stateName(match.stateCode);
+  const where = whereLabel(match, cityName);
   const what = match.service.category ? match.service.label.toLowerCase() : 'estate cleanout, senior move, junk removal and estate sale';
   return `Compare ${count} ${what} ${count === 1 ? 'company' : 'companies'} in ${where}. See services, phone numbers and websites, and contact local pros directly on ClearAnEstate.com.`;
 }
