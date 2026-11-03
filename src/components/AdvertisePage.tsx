@@ -6,6 +6,8 @@ import { PriceTagCard } from './PriceTagCard';
 import { fetchPricing, fetchPublicStats, startFeaturedCheckout, PricingInfo, PublicStats } from '../lib/api';
 import { dollars, pricingFor, TIER_SIZE, CITY_CAP, GUARANTEE_CONTACTS } from '../lib/pricing';
 import { CONTACT_EMAIL } from '../lib/site';
+import { ShareButton } from './ShareButton';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface AdvertisePageProps {
   listings: Listing[];
@@ -123,6 +125,23 @@ export const AdvertisePage: React.FC<AdvertisePageProps> = ({ listings }) => {
   }));
 
   const scrollToFinder = () => document.getElementById('find-your-listing')?.scrollIntoView({ behavior: 'smooth' });
+
+  // Sticky pricing bar: shows once the hero's button has scrolled out of view, and hides
+  // again while the "Find your business" section (which has its own checkout) is on screen.
+  const [heroCtaVisible, setHeroCtaVisible] = useState(true);
+  const [finderVisible, setFinderVisible] = useState(false);
+  useEffect(() => {
+    const watch = (id: string, set: (v: boolean) => void, rootMargin = '0px') => {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const observer = new IntersectionObserver(([entry]) => set(entry.isIntersecting), { rootMargin });
+      observer.observe(el);
+      return observer;
+    };
+    const observers = [watch('advertise-hero-cta', setHeroCtaVisible), watch('find-your-listing', setFinderVisible, '-45% 0px -45% 0px')];
+    return () => observers.forEach((o) => o?.disconnect());
+  }, []);
+  const showStickyBar = !heroCtaVisible && !finderVisible;
 
   return (
     <div className="text-stone-900 dark:text-stone-100">
@@ -498,6 +517,47 @@ export const AdvertisePage: React.FC<AdvertisePageProps> = ({ listings }) => {
           ))}
         </div>
       </Section>
+
+      {/* Room so the sticky bar never covers the last section */}
+      <div className="h-24" aria-hidden="true" />
+
+      <div className="fixed bottom-0 inset-x-0 z-30 pointer-events-none px-3 sm:px-4 pb-3 sm:pb-4">
+        <div className="max-w-4xl mx-auto flex flex-col items-end gap-3">
+          <div className="pointer-events-auto">
+            <ShareButton />
+          </div>
+          <AnimatePresence>
+          {showStickyBar && (
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            transition={{ duration: 0.25 }}
+            className="pointer-events-auto w-full flex items-center gap-3 sm:gap-4 bg-stone-900 dark:bg-stone-800 text-stone-50 border border-stone-700 rounded-2xl shadow-2xl px-4 sm:px-6 py-3"
+            id="advertise-sticky-bar"
+          >
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm sm:text-base leading-tight">
+                {priceText}/yr <span className="text-stone-400">·</span>{' '}
+                <span className="text-amber-400">{price.spotsLeftAtPrice} left</span> at this price, then {dollars(price.nextPriceCents)}
+              </p>
+              <p className="text-[11px] sm:text-xs text-stone-400 mt-0.5 truncate">
+                Top of your city&rsquo;s page · price locked · cancel anytime
+              </p>
+            </div>
+            <button
+              onClick={scrollToFinder}
+              className="shrink-0 inline-flex items-center gap-1.5 px-4 sm:px-5 py-2.5 rounded-xl text-sm font-bold bg-amber-500 hover:bg-amber-400 text-stone-950 transition-colors"
+              id="advertise-sticky-cta"
+            >
+              Get featured
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </motion.div>
+          )}
+          </AnimatePresence>
+        </div>
+      </div>
     </div>
   );
 };

@@ -26,6 +26,7 @@ import { ClaimModal } from './components/ClaimModal';
 import { QuoteModal } from './components/QuoteModal';
 import { Footer } from './components/Footer';
 import { LegalModal } from './components/LegalModal';
+import { ShareButton } from './components/ShareButton';
 import { Search, Filter, MapPin, Sparkles, SlidersHorizontal, Tag, RotateCcw, CheckCircle2, Bookmark, Info } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -866,6 +867,13 @@ export default function App() {
         onClose={() => setLegalModal((prev) => ({ ...prev, open: false }))}
         initialTab={legalModal.tab}
       />
+
+      {/* The advertise page renders its own share button above its sticky pricing bar. */}
+      {!isAdvertisePage && (
+        <div className="fixed bottom-4 right-4 z-30">
+          <ShareButton />
+        </div>
+      )}
     </div>
   );
 }
