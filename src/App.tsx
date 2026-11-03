@@ -61,6 +61,10 @@ const CATEGORIES: ListingCategory[] = [
   'Content Appraisal & Downsizing'
 ];
 
+// Cards shown before "Show more", and how many each click adds.
+const FIRST_PAGE_SIZE = 12;
+const MORE_PAGE_SIZE = 24;
+
 export default function App() {
   // Load listings from localStorage or fallback to initial 18 seed listings
   const [listings, setListings] = useState<Listing[]>(() => {
@@ -543,6 +547,16 @@ export default function App() {
     return 0;
   });
 
+  // Show a page of cards at a time so the sections below the grid (locations, guides)
+  // stay reachable. Starts over whenever the search, filters or page change; opening a
+  // listing keeps the background page, so coming back keeps your place.
+  const [visibleCount, setVisibleCount] = useState(FIRST_PAGE_SIZE);
+  useEffect(() => {
+    setVisibleCount(FIRST_PAGE_SIZE);
+  }, [backgroundPath, filters, showFavoritesOnly]);
+  const visibleListings = sortedListings.slice(0, visibleCount);
+  const remainingCount = sortedListings.length - visibleListings.length;
+
   // Show admin page if on /admin route
   if (isAdminPage) {
     return (
@@ -787,7 +801,8 @@ export default function App() {
           {/* Results Summary Count */}
           <div className="flex items-center justify-between mb-4">
             <span className="text-xs font-mono font-bold uppercase tracking-wider text-stone-500">
-              Showing {sortedListings.length} Price Tag Listings {showFavoritesOnly ? '(Bookmarked)' : ''}
+              Showing {visibleListings.length}
+              {remainingCount > 0 ? ` of ${sortedListings.length}` : ''} Price Tag Listings {showFavoritesOnly ? '(Bookmarked)' : ''}
             </span>
 
             {showFavoritesOnly && (
@@ -823,8 +838,9 @@ export default function App() {
               </button>
             </div>
           ) : (
+            <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-              {sortedListings.map((listing) => (
+              {visibleListings.map((listing) => (
                 <PriceTagCard
                   key={listing.id}
                   listing={listing}
@@ -835,6 +851,21 @@ export default function App() {
                 />
               ))}
             </div>
+            {remainingCount > 0 && (
+              <div className="flex flex-col items-center gap-2 mt-8">
+                <button
+                  onClick={() => setVisibleCount((n) => n + MORE_PAGE_SIZE)}
+                  className="px-6 py-3 rounded-xl text-sm font-bold bg-stone-900 hover:bg-amber-600 text-stone-50 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-amber-500 transition-colors shadow-sm"
+                  id="show-more-listings-btn"
+                >
+                  Show {Math.min(MORE_PAGE_SIZE, remainingCount)} more
+                </button>
+                <span className="text-xs text-stone-500 dark:text-stone-400">
+                  {remainingCount} more {remainingCount === 1 ? 'listing' : 'listings'}. Or narrow it down with the search, state or service above.
+                </span>
+              </div>
+            )}
+            </>
           )}
         </main>
 
