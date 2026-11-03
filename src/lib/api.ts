@@ -132,11 +132,11 @@ export async function fetchQuoteRequestsAdmin(password: string): Promise<QuoteRe
 
 export type TestEmailResult = { ok: boolean; error?: string; settings: Record<string, string> };
 
-export async function sendTestEmailAdmin(password: string, to: string): Promise<TestEmailResult> {
+export async function sendTestEmailAdmin(password: string, to: string, smtpPasswordToTry?: string): Promise<TestEmailResult> {
   const res = await fetch('/api/admin/test-email', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'x-admin-password': password },
-    body: JSON.stringify({ to }),
+    body: JSON.stringify({ to, password: smtpPasswordToTry || undefined }),
   });
   return parseJsonOrThrow(res);
 }

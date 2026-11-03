@@ -114,6 +114,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [isImporting, setIsImporting] = useState(false);
   const [promptCopied, setPromptCopied] = useState(false);
   const [testEmailTo, setTestEmailTo] = useState('');
+  const [testSmtpPassword, setTestSmtpPassword] = useState('');
   const [testEmailResult, setTestEmailResult] = useState<TestEmailResult | null>(null);
   const [testEmailError, setTestEmailError] = useState<string | null>(null);
   const [isSendingTestEmail, setIsSendingTestEmail] = useState(false);
@@ -123,7 +124,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setTestEmailResult(null);
     setTestEmailError(null);
     try {
-      setTestEmailResult(await sendTestEmailAdmin(adminPassword, testEmailTo.trim()));
+      setTestEmailResult(await sendTestEmailAdmin(adminPassword, testEmailTo.trim(), testSmtpPassword));
     } catch (err: any) {
       setTestEmailError(err?.message || 'Test email request failed.');
     } finally {
@@ -416,6 +417,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                   placeholder="Send test to (your email)"
                   className="flex-1 px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm"
                   id="test-email-to"
+                />
+                <input
+                  type="password"
+                  value={testSmtpPassword}
+                  onChange={(e) => setTestSmtpPassword(e.target.value)}
+                  placeholder="Mailbox password to try (optional)"
+                  autoComplete="new-password"
+                  className="flex-1 px-3 py-2 rounded-lg border border-stone-300 dark:border-stone-600 bg-white dark:bg-stone-900 text-stone-900 dark:text-stone-100 text-sm"
+                  id="test-email-password"
                 />
                 <button
                   onClick={handleSendTestEmail}

@@ -169,22 +169,25 @@ var transporter = null;
 function isMailConfigured() {
   return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD);
 }
+function createSmtpTransport(pass) {
+  return import_nodemailer.default.createTransport({
+    host: process.env.SMTP_HOST,
+    port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
+    secure: process.env.SMTP_SECURE === "true",
+    // Fail fast on a wrong port/SSL combination instead of hanging the request.
+    connectionTimeout: 15e3,
+    greetingTimeout: 15e3,
+    socketTimeout: 3e4,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass
+    }
+  });
+}
 function getTransporter() {
   if (!isMailConfigured()) return null;
   if (!transporter) {
-    transporter = import_nodemailer.default.createTransport({
-      host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT ? Number(process.env.SMTP_PORT) : 587,
-      secure: process.env.SMTP_SECURE === "true",
-      // Fail fast on a wrong port/SSL combination instead of hanging the request.
-      connectionTimeout: 15e3,
-      greetingTimeout: 15e3,
-      socketTimeout: 3e4,
-      auth: {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASSWORD
-      }
-    });
+    transporter = createSmtpTransport(process.env.SMTP_PASSWORD);
   }
   return transporter;
 }
@@ -205,17 +208,21 @@ async function sendMail(opts) {
     return false;
   }
 }
-async function sendTestMail(to) {
+async function sendTestMail(to, passwordToTry) {
+  const saved = process.env.SMTP_PASSWORD;
   const settings = {
     SMTP_HOST: process.env.SMTP_HOST || "(missing)",
     SMTP_PORT: process.env.SMTP_PORT || "(missing, using 587)",
     SMTP_SECURE: process.env.SMTP_SECURE || "(missing, using false)",
     SMTP_USER: process.env.SMTP_USER || "(missing)",
-    SMTP_PASSWORD: process.env.SMTP_PASSWORD ? "(set)" : "(missing)",
+    SMTP_PASSWORD: saved ? `(set, ${saved.length} characters${saved !== saved.trim() ? ", HAS SPACES AT THE START OR END" : ""}${/^["'].*["']$/.test(saved) ? ", WRAPPED IN QUOTES" : ""})` : "(missing)",
     SMTP_FROM: process.env.SMTP_FROM || "(missing, using SMTP_USER)",
     ADMIN_NOTIFICATION_EMAIL: process.env.ADMIN_NOTIFICATION_EMAIL || "(missing, no admin notifications are sent)"
   };
-  const mailer = getTransporter();
+  if (passwordToTry) {
+    settings["Password you typed"] = `${passwordToTry.length} characters, ${passwordToTry === saved ? "MATCHES" : "DOES NOT MATCH"} the saved SMTP_PASSWORD`;
+  }
+  const mailer = passwordToTry && process.env.SMTP_HOST && process.env.SMTP_USER ? createSmtpTransport(passwordToTry) : getTransporter();
   if (!mailer) {
     return { ok: false, error: "Email is switched off: SMTP_HOST, SMTP_USER and SMTP_PASSWORD must all be set.", settings };
   }
@@ -1317,7 +1324,8 @@ app.post("/api/admin/test-email", adminAuthLimiter, requireAdmin, async (req, re
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
     return res.status(400).json({ error: "Enter a valid email address to send the test to." });
   }
-  res.json(await sendTestMail(to));
+  const passwordToTry = typeof req.body?.password === "string" && req.body.password ? req.body.password : void 0;
+  res.json(await sendTestMail(to, passwordToTry));
 });
 app.get("/api/admin/claims", adminAuthLimiter, requireAdmin, async (req, res) => {
   const db = getPool();

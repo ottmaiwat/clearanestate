@@ -1156,7 +1156,8 @@ app.post('/api/admin/test-email', adminAuthLimiter, requireAdmin, async (req, re
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
     return res.status(400).json({ error: 'Enter a valid email address to send the test to.' });
   }
-  res.json(await sendTestMail(to));
+  const passwordToTry = typeof req.body?.password === 'string' && req.body.password ? req.body.password : undefined;
+  res.json(await sendTestMail(to, passwordToTry));
 });
 
 // Admin: list claim requests
