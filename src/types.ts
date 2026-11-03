@@ -37,6 +37,9 @@ export interface Listing {
   featuredAt?: string;
   createdAt: string;
   reviews?: Review[];
+  // Approved owner uploads (shown on featured listings only).
+  logoUrl?: string;
+  photos?: string[];
 }
 
 export interface ClaimRequest {

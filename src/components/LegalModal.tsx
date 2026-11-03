@@ -172,7 +172,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
               <section>
                 <h3 className="font-bold text-sm mb-1">User-Submitted Content</h3>
                 <p>
-                  You are responsible for the accuracy of any information you submit through this site, including business listings, estimate requests, and claim requests. Don't submit false, misleading, or fraudulent information.
+                  You are responsible for the accuracy of any information you submit through this site, including business listings, estimate requests, and claim requests. Don't submit false, misleading, or fraudulent information. If you upload a logo or photos, you confirm that you own them or have permission to use them, and you allow us to display them on the Directory. We review uploads before they appear and may remove any image at any time.
                 </p>
               </section>
 

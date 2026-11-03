@@ -10,6 +10,7 @@ import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, sendTestMail, isMailConfigured } from './mailer';
 import { buildReports, sendReports, previousPeriod, periodLabel, isValidPeriod } from './reports';
 import { verifyEditToken, editLinkUrl, EDIT_LINK_DAYS } from './ownerLinks';
+import { UPLOAD_DIR, MAX_LOGOS, MAX_PHOTOS, PhotoKind, PhotoRow, photoUrl, decodeImage, savePhotoFile, deletePhotoFile, newPhotoId } from './photos';
 import { listingPath } from './src/lib/slug';
 import { badgeHtml } from './src/lib/badge';
 import { GUIDES, guidePath, parseGuidePath } from './src/lib/guides';
@@ -190,8 +191,22 @@ app.post(
   }
 );
 
-// JSON body parser for standard REST API endpoints
-app.use(express.json());
+// JSON body parser for standard REST API endpoints. Photo uploads carry an image, so
+// that one route gets its own, larger limit instead.
+const PHOTO_UPLOAD_PATH = '/api/owner/photos';
+app.use((req, res, next) => (req.path === PHOTO_UPLOAD_PATH ? next() : express.json()(req, res, next)));
+
+// Owner-uploaded photos. Only exact files are served (no directory listing, no SPA
+// fallback), with nosniff so a file can never be treated as anything but an image.
+app.use(
+  '/uploads',
+  express.static(UPLOAD_DIR, {
+    fallthrough: false,
+    index: false,
+    maxAge: '30d',
+    setHeaders: (res) => res.set('X-Content-Type-Options', 'nosniff'),
+  })
+);
 
 // API route: Stripe status
 app.get('/api/stripe/status', (req, res) => {
@@ -449,7 +464,17 @@ app.get('/api/listings', async (req, res) => {
   try {
     await ensureSchema();
     const [rows] = await db.query('SELECT * FROM listings ORDER BY featured DESC, featured_at ASC, rating DESC');
-    res.json((rows as any[]).map(rowToListing));
+    const [photoRows] = await db.query(
+      "SELECT listing_id, kind, filename FROM listing_photos WHERE status = 'approved' ORDER BY created_at ASC"
+    );
+    const photos = new Map<string, { logoUrl?: string; photos: string[] }>();
+    for (const p of photoRows as any[]) {
+      const entry = photos.get(p.listing_id) || { photos: [] };
+      if (p.kind === 'logo') entry.logoUrl = photoUrl(p.filename);
+      else entry.photos.push(photoUrl(p.filename));
+      photos.set(p.listing_id, entry);
+    }
+    res.json((rows as any[]).map((row) => ({ ...rowToListing(row), ...photos.get(row.id) })));
   } catch (err: any) {
     console.error('Error fetching listings:', err);
     res.status(500).json({ error: 'Failed to fetch listings.' });
@@ -968,7 +993,7 @@ app.get('/api/owner/listing', async (req, res) => {
     const row = (rows as any[])[0];
     if (!row) return res.status(404).json({ error: 'This listing no longer exists.' });
     if (!(await trustedOwnerEmails(row)).has(access.email.toLowerCase())) return res.status(401).json({ error: NO_LONGER_OWNER });
-    res.json({ listing: rowToListing(row), editorEmail: access.email });
+    res.json({ listing: rowToListing(row), editorEmail: access.email, photos: await ownerPhotos(row.id) });
   } catch (err: any) {
     console.error('Error loading listing for owner:', err);
     res.status(500).json({ error: 'Failed to load your listing.' });
@@ -1017,6 +1042,165 @@ app.post('/api/owner/listing', ownerEditLimiter, async (req, res) => {
   } catch (err: any) {
     console.error('Error saving owner edit:', err);
     res.status(500).json({ error: 'Failed to save your changes.' });
+  }
+});
+
+// ---- Photos ----------------------------------------------------------------------------
+
+// An owner's photos for their edit page: everything not rejected, plus rejected ones so
+// they can see what wasn't approved (those files are already deleted, so no URL).
+async function ownerPhotos(listingId: string) {
+  const db = getPool()!;
+  const [rows] = await db.query('SELECT * FROM listing_photos WHERE listing_id = ? ORDER BY created_at ASC', [listingId]);
+  return (rows as PhotoRow[]).map((p) => ({
+    id: p.id,
+    kind: p.kind,
+    status: p.status,
+    url: p.status === 'rejected' ? null : photoUrl(p.filename),
+  }));
+}
+
+// Resolves an owner's edit-link token to their listing, or sends the error response.
+async function ownerListingFromToken(token: any, res: express.Response): Promise<{ row: any; email: string } | null> {
+  const db = getPool();
+  if (!db) {
+    res.status(503).json({ error: 'Database is not configured on server.' });
+    return null;
+  }
+  const access = verifyEditToken(String(token || ''));
+  if (!access) {
+    res.status(401).json({ error: 'This edit link is invalid or has expired. Ask for a new one from your listing page.' });
+    return null;
+  }
+  await ensureSchema();
+  const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [access.listingId]);
+  const row = (rows as any[])[0];
+  if (!row) {
+    res.status(404).json({ error: 'This listing no longer exists.' });
+    return null;
+  }
+  if (!(await trustedOwnerEmails(row)).has(access.email.toLowerCase())) {
+    res.status(401).json({ error: NO_LONGER_OWNER });
+    return null;
+  }
+  return { row, email: access.email };
+}
+
+// Owner: upload a logo or photo. It waits for admin approval before it shows anywhere.
+app.post(PHOTO_UPLOAD_PATH, ownerEditLimiter, express.json({ limit: '5mb' }), async (req, res) => {
+  try {
+    const owner = await ownerListingFromToken(req.body?.token, res);
+    if (!owner) return;
+    const kind: PhotoKind = req.body?.kind === 'logo' ? 'logo' : 'photo';
+
+    const db = getPool()!;
+    const [[{ n }]] = (await db.query(
+      "SELECT COUNT(*) AS n FROM listing_photos WHERE listing_id = ? AND kind = ? AND status <> 'rejected'",
+      [owner.row.id, kind]
+    )) as any;
+    const max = kind === 'logo' ? MAX_LOGOS : MAX_PHOTOS;
+    if (Number(n) >= max) {
+      return res.status(400).json({
+        error: kind === 'logo' ? 'You already have a logo. Remove it first to upload a new one.' : `You can have up to ${MAX_PHOTOS} photos. Remove one to add another.`,
+      });
+    }
+
+    const image = decodeImage(req.body?.image);
+    if ('error' in image) return res.status(400).json({ error: image.error });
+
+    const filename = savePhotoFile(owner.row.id, image.buffer, image.ext);
+    await db.query(
+      'INSERT INTO listing_photos (id, listing_id, kind, filename, status, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)',
+      [newPhotoId(), owner.row.id, kind, filename, 'pending', owner.email]
+    );
+    notifyAdmin(
+      `New ${kind} to review: ${owner.row.name}`,
+      `${owner.email} uploaded a ${kind} for "${owner.row.name}" (${owner.row.city}, ${owner.row.state}).\n\n${SITE_URL}${photoUrl(filename)}\n\nApprove or reject it in the Admin Portal's Photos tab.`
+    );
+    res.status(201).json({ photos: await ownerPhotos(owner.row.id) });
+  } catch (err: any) {
+    console.error('Error uploading photo:', err);
+    res.status(500).json({ error: 'Failed to upload the image.' });
+  }
+});
+
+// Owner: remove one of their own photos (pending or live).
+app.post('/api/owner/photos/:photoId/delete', ownerEditLimiter, async (req, res) => {
+  try {
+    const owner = await ownerListingFromToken(req.body?.token, res);
+    if (!owner) return;
+    const db = getPool()!;
+    const [rows] = await db.query('SELECT * FROM listing_photos WHERE id = ? AND listing_id = ?', [req.params.photoId, owner.row.id]);
+    const photo = (rows as PhotoRow[])[0];
+    if (!photo) return res.status(404).json({ error: 'Photo not found.' });
+    deletePhotoFile(photo.filename);
+    await db.query('DELETE FROM listing_photos WHERE id = ?', [photo.id]);
+    res.json({ photos: await ownerPhotos(owner.row.id) });
+  } catch (err: any) {
+    console.error('Error deleting photo:', err);
+    res.status(500).json({ error: 'Failed to remove the image.' });
+  }
+});
+
+// Admin: photos waiting for review (or, with ?status=approved, the live ones).
+app.get('/api/admin/photos', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+  const status = req.query.status === 'approved' ? 'approved' : 'pending';
+  try {
+    await ensureSchema();
+    const [rows] = await db.query(
+      `SELECT p.*, l.name, l.city, l.state, l.featured FROM listing_photos p
+       LEFT JOIN listings l ON l.id = p.listing_id
+       WHERE p.status = ? ORDER BY p.created_at ${status === 'pending' ? 'ASC' : 'DESC'}`,
+      [status]
+    );
+    res.json(
+      (rows as any[]).map((p) => ({
+        id: p.id,
+        listingId: p.listing_id,
+        listingName: p.name || '(deleted listing)',
+        city: p.city || '',
+        state: p.state || '',
+        featured: !!p.featured,
+        kind: p.kind,
+        status: p.status,
+        url: photoUrl(p.filename),
+        uploadedBy: p.uploaded_by,
+        createdAt: p.created_at,
+      }))
+    );
+  } catch (err: any) {
+    console.error('Error listing photos:', err);
+    res.status(500).json({ error: 'Failed to load photos.' });
+  }
+});
+
+// Admin: approve, reject (deletes the file) or remove a live photo.
+app.post('/api/admin/photos/:id/:action', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+  const { id, action } = req.params;
+  if (!['approve', 'reject', 'remove'].includes(action)) return res.status(404).json({ error: 'Unknown action.' });
+  try {
+    await ensureSchema();
+    const [rows] = await db.query('SELECT * FROM listing_photos WHERE id = ?', [id]);
+    const photo = (rows as PhotoRow[])[0];
+    if (!photo) return res.status(404).json({ error: 'Photo not found.' });
+
+    if (action === 'approve') {
+      await db.query("UPDATE listing_photos SET status = 'approved' WHERE id = ?", [id]);
+    } else if (action === 'reject') {
+      deletePhotoFile(photo.filename);
+      await db.query("UPDATE listing_photos SET status = 'rejected' WHERE id = ?", [id]);
+    } else {
+      deletePhotoFile(photo.filename);
+      await db.query('DELETE FROM listing_photos WHERE id = ?', [id]);
+    }
+    res.json({ ok: true });
+  } catch (err: any) {
+    console.error('Error updating photo:', err);
+    res.status(500).json({ error: 'Failed to update the photo.' });
   }
 });
 

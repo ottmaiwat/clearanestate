@@ -42,6 +42,8 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   const listingId = listing?.id;
   const [showBadge, setShowBadge] = useState(false);
   const [showEditRequest, setShowEditRequest] = useState(false);
+  // Owner logo and photos are a featured-listing perk.
+  const showPhotos = !!listing?.featured;
   useEffect(() => {
     if (listingId) trackEvent('listing_view', listingId);
     setShowBadge(false);
@@ -81,6 +83,10 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
             </div>
 
             <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-start gap-4">
+                {showPhotos && listing.logoUrl && (
+                  <img src={listing.logoUrl} alt={`${listing.name} logo`} className="w-16 h-16 rounded-xl object-contain bg-white border border-stone-200 dark:border-stone-700 p-1 shrink-0" />
+                )}
               <div>
                 <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-200/80 dark:bg-amber-950 dark:text-amber-300 text-amber-900 mb-2">
                   {listing.category}
@@ -91,6 +97,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <p className="text-stone-700 dark:text-stone-300 italic font-serif mt-1">
                   "{listing.tagline}"
                 </p>
+              </div>
               </div>
 
               {listing.featured && (
@@ -104,6 +111,22 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
 
           {/* Body Content */}
           <div className="p-6 space-y-6 max-h-[75vh] overflow-y-auto">
+            {/* Owner photos (featured listings) */}
+            {showPhotos && listing.photos && listing.photos.length > 0 && (
+              <div className="flex gap-3 overflow-x-auto pb-1 -mx-1 px-1 snap-x" id="listing-photos">
+                {listing.photos.map((src, i) => (
+                  <a key={src} href={src} target="_blank" rel="noopener noreferrer" className="shrink-0 snap-start">
+                    <img
+                      src={src}
+                      alt={`${listing.name} photo ${i + 1}`}
+                      className="h-40 sm:h-48 w-auto max-w-[80vw] rounded-xl object-cover border border-stone-200 dark:border-stone-700"
+                      loading="lazy"
+                    />
+                  </a>
+                ))}
+              </div>
+            )}
+
             {/* Quick Stats Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-stone-100/80 dark:bg-stone-800/50 p-4 rounded-xl border border-stone-200 dark:border-stone-800">
               <div>

@@ -135,6 +135,21 @@ export function ensureSchema(): Promise<void> {
       )
     `);
 
+    // Logos and photos uploaded by listing owners. Files live on disk (see photos.ts);
+    // nothing shows publicly until the admin approves it.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS listing_photos (
+        id VARCHAR(40) PRIMARY KEY,
+        listing_id VARCHAR(64) NOT NULL,
+        kind VARCHAR(10) NOT NULL,
+        filename VARCHAR(100) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        uploaded_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_photos_listing (listing_id, status)
+      )
+    `);
+
     // One row per monthly results email sent, so a month is never sent twice to a listing.
     // period is 'YYYY-MM'.
     await db.query(`

@@ -7,3 +7,6 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Owner-uploaded photos live on the server only (see photos.ts); back them up with the DB.
+uploads/

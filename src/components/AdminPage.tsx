@@ -29,6 +29,7 @@ import { toCsv, downloadCsv } from '../lib/csv';
 import { TrafficPanel } from './TrafficPanel';
 import { ThemeToggle } from './ThemeToggle';
 import { MonthlyReportsPanel } from './MonthlyReportsPanel';
+import { PhotosPanel } from './PhotosPanel';
 
 const CATEGORIES = [
   'Estate Cleanouts',
@@ -107,7 +108,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   onLoginSuccess,
   onLogout,
 }) => {
-  const [activeTab, setActiveTab] = useState<'pending' | 'live' | 'quotes' | 'claims' | 'import' | 'subscriptions' | 'stats'>('pending');
+  const [activeTab, setActiveTab] = useState<'pending' | 'live' | 'quotes' | 'claims' | 'import' | 'subscriptions' | 'stats' | 'photos'>('pending');
   const [searchTerm, setSearchTerm] = useState('');
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -307,6 +308,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             { id: 'claims' as const, label: 'Claim Requests', count: pendingClaimsCount },
             { id: 'import' as const, label: 'Bulk Import', count: null },
             { id: 'subscriptions' as const, label: 'Subscriptions', count: subscriptions.length },
+            { id: 'photos' as const, label: 'Photos', count: null },
             { id: 'stats' as const, label: 'Traffic', count: null },
           ].map((tab) => (
             <button
@@ -675,6 +677,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           </div>
         )}
 
+        {activeTab === 'photos' && <PhotosPanel adminPassword={adminPassword} dbConfigured={dbConfigured} />}
         {activeTab === 'stats' && <TrafficPanel adminPassword={adminPassword} dbConfigured={dbConfigured} />}
       </div>
     </div>

@@ -29,6 +29,8 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
   // Featured (paid) cards get more on the card itself: description, trust badges, more
   // services and a full Call / Website / Directions row. Free cards stay compact.
   const featured = listing.featured;
+  const coverPhoto = featured ? listing.photos?.[0] : undefined;
+  const logo = featured ? listing.logoUrl : undefined;
   const serviceLimit = featured ? 6 : 3;
   const trustBadges = [
     listing.insured && 'Insured',
@@ -52,6 +54,10 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
           : 'bg-amber-50/40 dark:bg-stone-900 border-stone-200 dark:border-stone-800 hover:border-amber-300 dark:hover:border-amber-700'
       }`}
     >
+      {coverPhoto && (
+        <img src={coverPhoto} alt="" className="-mx-5 -mt-5 mb-4 h-36 w-[calc(100%+2.5rem)] max-w-none object-cover" loading="lazy" />
+      )}
+
       {/* Top Tag Hole & String Graphic */}
       <div className="flex items-center justify-between border-b border-stone-200/80 dark:border-stone-800 pb-3 mb-3">
         {/* Estate Sale Tag Grommet / Punch Hole */}
@@ -99,9 +105,12 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
         </div>
 
         {/* Company Title */}
-        <h3 className="text-xl font-serif font-bold text-stone-900 dark:text-stone-100 group-hover:text-amber-700 dark:group-hover:text-amber-400 transition-colors line-clamp-1 mb-1">
+        <div className="flex items-center gap-2.5 mb-1">
+          {logo && <img src={logo} alt="" className="w-9 h-9 rounded-lg object-contain bg-white border border-stone-200 dark:border-stone-700 p-0.5 shrink-0" loading="lazy" />}
+        <h3 className="min-w-0 text-xl font-serif font-bold text-stone-900 dark:text-stone-100 group-hover:text-amber-700 dark:group-hover:text-amber-400 transition-colors line-clamp-1">
           {listing.name}
         </h3>
+        </div>
 
         {/* Tagline */}
         <p className="text-sm text-stone-600 dark:text-stone-400 line-clamp-2 italic mb-3 font-serif">

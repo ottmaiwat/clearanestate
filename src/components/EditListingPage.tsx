@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { CheckCircle2, ExternalLink, Loader2, Lock, Save, AlertTriangle } from 'lucide-react';
 import { Listing } from '../types';
-import { fetchOwnerListing, saveOwnerListing, OwnerListingEdit } from '../lib/api';
+import { fetchOwnerListing, saveOwnerListing, OwnerListingEdit, OwnerPhoto } from '../lib/api';
+import { OwnerPhotos } from './OwnerPhotos';
 import { listingPath } from '../lib/slug';
 import { CONTACT_EMAIL } from '../lib/site';
 
@@ -39,6 +40,7 @@ export const EditListingPage: React.FC<{ onSaved?: (listing: Listing) => void }>
   const token = params.get('token') || '';
   const [listing, setListing] = useState<Listing | null>(null);
   const [editorEmail, setEditorEmail] = useState('');
+  const [photos, setPhotos] = useState<OwnerPhoto[]>([]);
   const [form, setForm] = useState<OwnerListingEdit | null>(null);
   const [servicesText, setServicesText] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -52,9 +54,10 @@ export const EditListingPage: React.FC<{ onSaved?: (listing: Listing) => void }>
       return;
     }
     fetchOwnerListing(token)
-      .then(({ listing: l, editorEmail: e }) => {
+      .then(({ listing: l, editorEmail: e, photos: p }) => {
         setListing(l);
         setEditorEmail(e);
+        setPhotos(p || []);
         const f = toForm(l);
         setForm(f);
         setServicesText(f.services.join('\n'));
@@ -198,6 +201,10 @@ export const EditListingPage: React.FC<{ onSaved?: (listing: Listing) => void }>
           )}
         </div>
       </form>
+
+      <div className="max-w-2xl mx-auto px-4 pb-12">
+        <OwnerPhotos token={token} listingId={listing.id} featured={listing.featured} photos={photos} onChange={setPhotos} />
+      </div>
     </div>
   );
 };

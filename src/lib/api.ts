@@ -342,7 +342,7 @@ export async function requestEditLink(listingId: string, email: string, hp?: str
   return parseJsonOrThrow(res);
 }
 
-export async function fetchOwnerListing(token: string): Promise<{ listing: Listing; editorEmail: string }> {
+export async function fetchOwnerListing(token: string): Promise<{ listing: Listing; editorEmail: string; photos: OwnerPhoto[] }> {
   const res = await fetch(`/api/owner/listing?token=${encodeURIComponent(token)}`);
   return parseJsonOrThrow(res);
 }
@@ -368,4 +368,51 @@ export async function saveOwnerListing(token: string, listing: OwnerListingEdit)
     body: JSON.stringify({ token, listing }),
   });
   return parseJsonOrThrow(res);
+}
+
+export type OwnerPhoto = { id: string; kind: 'logo' | 'photo'; status: 'pending' | 'approved' | 'rejected'; url: string | null };
+
+export async function uploadOwnerPhoto(token: string, kind: 'logo' | 'photo', image: string): Promise<{ photos: OwnerPhoto[] }> {
+  const res = await fetch('/api/owner/photos', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, kind, image }),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export async function deleteOwnerPhoto(token: string, photoId: string): Promise<{ photos: OwnerPhoto[] }> {
+  const res = await fetch(`/api/owner/photos/${encodeURIComponent(photoId)}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  return parseJsonOrThrow(res);
+}
+
+export type AdminPhoto = {
+  id: string;
+  listingId: string;
+  listingName: string;
+  city: string;
+  state: string;
+  featured: boolean;
+  kind: 'logo' | 'photo';
+  status: 'pending' | 'approved';
+  url: string;
+  uploadedBy: string | null;
+  createdAt: string;
+};
+
+export async function fetchPhotosAdmin(password: string, status: 'pending' | 'approved'): Promise<AdminPhoto[]> {
+  const res = await fetch(`/api/admin/photos?status=${status}`, { headers: { 'x-admin-password': password } });
+  return parseJsonOrThrow(res);
+}
+
+export async function updatePhotoAdmin(password: string, id: string, action: 'approve' | 'reject' | 'remove'): Promise<void> {
+  const res = await fetch(`/api/admin/photos/${encodeURIComponent(id)}/${action}`, {
+    method: 'POST',
+    headers: { 'x-admin-password': password },
+  });
+  await parseJsonOrThrow(res);
 }

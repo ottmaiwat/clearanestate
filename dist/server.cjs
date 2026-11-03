@@ -23,9 +23,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 
 // server.ts
 var import_express = __toESM(require("express"), 1);
-var import_path = __toESM(require("path"), 1);
-var import_fs = __toESM(require("fs"), 1);
-var import_crypto2 = __toESM(require("crypto"), 1);
+var import_path2 = __toESM(require("path"), 1);
+var import_fs2 = __toESM(require("fs"), 1);
+var import_crypto3 = __toESM(require("crypto"), 1);
 var import_vite = require("vite");
 var import_stripe = __toESM(require("stripe"), 1);
 var import_dotenv = __toESM(require("dotenv"), 1);
@@ -147,6 +147,18 @@ function ensureSchema() {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_events_created (created_at),
         INDEX idx_events_listing (listing_id, created_at)
+      )
+    `);
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS listing_photos (
+        id VARCHAR(40) PRIMARY KEY,
+        listing_id VARCHAR(64) NOT NULL,
+        kind VARCHAR(10) NOT NULL,
+        filename VARCHAR(100) NOT NULL,
+        status VARCHAR(20) NOT NULL DEFAULT 'pending',
+        uploaded_by VARCHAR(255),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_photos_listing (listing_id, status)
       )
     `);
     await db.query(`
@@ -505,6 +517,49 @@ async function sendReports(period, stripe) {
     }
   }
   return result;
+}
+
+// photos.ts
+var import_crypto2 = __toESM(require("crypto"), 1);
+var import_fs = __toESM(require("fs"), 1);
+var import_path = __toESM(require("path"), 1);
+var UPLOAD_DIR = process.env.UPLOAD_DIR || import_path.default.join(process.cwd(), "uploads");
+var MAX_LOGOS = 1;
+var MAX_PHOTOS = 6;
+var MAX_BYTES = 3 * 1024 * 1024;
+function photoUrl(filename) {
+  return `/uploads/${filename}`;
+}
+function detectType(buf) {
+  if (buf.length > 3 && buf[0] === 255 && buf[1] === 216 && buf[2] === 255) return "jpg";
+  if (buf.length > 8 && buf.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "png";
+  if (buf.length > 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "webp";
+  return null;
+}
+function decodeImage(data) {
+  if (typeof data !== "string" || data.length === 0) return { error: "No image was received." };
+  const base64 = data.includes(",") ? data.slice(data.indexOf(",") + 1) : data;
+  const buffer = Buffer.from(base64, "base64");
+  if (buffer.length === 0) return { error: "No image was received." };
+  if (buffer.length > MAX_BYTES) return { error: "That image is too large. Please choose a smaller one." };
+  const ext = detectType(buffer);
+  if (!ext) return { error: "Please upload a JPEG, PNG or WebP image." };
+  return { buffer, ext };
+}
+function savePhotoFile(listingId, buffer, ext) {
+  import_fs.default.mkdirSync(UPLOAD_DIR, { recursive: true });
+  const safeId = listingId.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+  const filename = `${safeId}-${import_crypto2.default.randomBytes(12).toString("hex")}.${ext}`;
+  import_fs.default.writeFileSync(import_path.default.join(UPLOAD_DIR, filename), buffer);
+  return filename;
+}
+function deletePhotoFile(filename) {
+  if (!/^[a-z0-9-]+\.(jpg|png|webp)$/.test(filename)) return;
+  import_fs.default.rm(import_path.default.join(UPLOAD_DIR, filename), { force: true }, () => {
+  });
+}
+function newPhotoId() {
+  return "p-" + Date.now() + "-" + import_crypto2.default.randomBytes(4).toString("hex");
 }
 
 // src/lib/badge.ts
@@ -936,7 +991,17 @@ app.post(
     res.json({ received: true });
   }
 );
-app.use(import_express.default.json());
+var PHOTO_UPLOAD_PATH = "/api/owner/photos";
+app.use((req, res, next) => req.path === PHOTO_UPLOAD_PATH ? next() : import_express.default.json()(req, res, next));
+app.use(
+  "/uploads",
+  import_express.default.static(UPLOAD_DIR, {
+    fallthrough: false,
+    index: false,
+    maxAge: "30d",
+    setHeaders: (res) => res.set("X-Content-Type-Options", "nosniff")
+  })
+);
 app.get("/api/stripe/status", (req, res) => {
   const hasSecretKey = !!process.env.STRIPE_SECRET_KEY;
   const hasWebhookSecret = !!process.env.STRIPE_WEBHOOK_SECRET;
@@ -1141,7 +1206,17 @@ app.get("/api/listings", async (req, res) => {
   try {
     await ensureSchema();
     const [rows] = await db.query("SELECT * FROM listings ORDER BY featured DESC, featured_at ASC, rating DESC");
-    res.json(rows.map(rowToListing));
+    const [photoRows] = await db.query(
+      "SELECT listing_id, kind, filename FROM listing_photos WHERE status = 'approved' ORDER BY created_at ASC"
+    );
+    const photos = /* @__PURE__ */ new Map();
+    for (const p of photoRows) {
+      const entry = photos.get(p.listing_id) || { photos: [] };
+      if (p.kind === "logo") entry.logoUrl = photoUrl(p.filename);
+      else entry.photos.push(photoUrl(p.filename));
+      photos.set(p.listing_id, entry);
+    }
+    res.json(rows.map((row) => ({ ...rowToListing(row), ...photos.get(row.id) })));
   } catch (err) {
     console.error("Error fetching listings:", err);
     res.status(500).json({ error: "Failed to fetch listings." });
@@ -1205,7 +1280,7 @@ var trackLimiter = (0, import_express_rate_limit.default)({
 });
 function visitorHash(req) {
   const day = (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
-  return import_crypto2.default.createHash("sha256").update(`${day}|${process.env.ADMIN_PASSWORD || ""}|${req.ip}|${req.get("user-agent") || ""}`).digest("hex").slice(0, 16);
+  return import_crypto3.default.createHash("sha256").update(`${day}|${process.env.ADMIN_PASSWORD || ""}|${req.ip}|${req.get("user-agent") || ""}`).digest("hex").slice(0, 16);
 }
 app.post("/api/track", trackLimiter, async (req, res) => {
   res.status(204).end();
@@ -1585,7 +1660,7 @@ app.get("/api/owner/listing", async (req, res) => {
     const row = rows[0];
     if (!row) return res.status(404).json({ error: "This listing no longer exists." });
     if (!(await trustedOwnerEmails(row)).has(access.email.toLowerCase())) return res.status(401).json({ error: NO_LONGER_OWNER });
-    res.json({ listing: rowToListing(row), editorEmail: access.email });
+    res.json({ listing: rowToListing(row), editorEmail: access.email, photos: await ownerPhotos(row.id) });
   } catch (err) {
     console.error("Error loading listing for owner:", err);
     res.status(500).json({ error: "Failed to load your listing." });
@@ -1629,6 +1704,150 @@ ${SITE_URL2}${listingPath(before)}`
   } catch (err) {
     console.error("Error saving owner edit:", err);
     res.status(500).json({ error: "Failed to save your changes." });
+  }
+});
+async function ownerPhotos(listingId) {
+  const db = getPool();
+  const [rows] = await db.query("SELECT * FROM listing_photos WHERE listing_id = ? ORDER BY created_at ASC", [listingId]);
+  return rows.map((p) => ({
+    id: p.id,
+    kind: p.kind,
+    status: p.status,
+    url: p.status === "rejected" ? null : photoUrl(p.filename)
+  }));
+}
+async function ownerListingFromToken(token, res) {
+  const db = getPool();
+  if (!db) {
+    res.status(503).json({ error: "Database is not configured on server." });
+    return null;
+  }
+  const access = verifyEditToken(String(token || ""));
+  if (!access) {
+    res.status(401).json({ error: "This edit link is invalid or has expired. Ask for a new one from your listing page." });
+    return null;
+  }
+  await ensureSchema();
+  const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [access.listingId]);
+  const row = rows[0];
+  if (!row) {
+    res.status(404).json({ error: "This listing no longer exists." });
+    return null;
+  }
+  if (!(await trustedOwnerEmails(row)).has(access.email.toLowerCase())) {
+    res.status(401).json({ error: NO_LONGER_OWNER });
+    return null;
+  }
+  return { row, email: access.email };
+}
+app.post(PHOTO_UPLOAD_PATH, ownerEditLimiter, import_express.default.json({ limit: "5mb" }), async (req, res) => {
+  try {
+    const owner = await ownerListingFromToken(req.body?.token, res);
+    if (!owner) return;
+    const kind = req.body?.kind === "logo" ? "logo" : "photo";
+    const db = getPool();
+    const [[{ n }]] = await db.query(
+      "SELECT COUNT(*) AS n FROM listing_photos WHERE listing_id = ? AND kind = ? AND status <> 'rejected'",
+      [owner.row.id, kind]
+    );
+    const max = kind === "logo" ? MAX_LOGOS : MAX_PHOTOS;
+    if (Number(n) >= max) {
+      return res.status(400).json({
+        error: kind === "logo" ? "You already have a logo. Remove it first to upload a new one." : `You can have up to ${MAX_PHOTOS} photos. Remove one to add another.`
+      });
+    }
+    const image = decodeImage(req.body?.image);
+    if ("error" in image) return res.status(400).json({ error: image.error });
+    const filename = savePhotoFile(owner.row.id, image.buffer, image.ext);
+    await db.query(
+      "INSERT INTO listing_photos (id, listing_id, kind, filename, status, uploaded_by) VALUES (?, ?, ?, ?, ?, ?)",
+      [newPhotoId(), owner.row.id, kind, filename, "pending", owner.email]
+    );
+    notifyAdmin(
+      `New ${kind} to review: ${owner.row.name}`,
+      `${owner.email} uploaded a ${kind} for "${owner.row.name}" (${owner.row.city}, ${owner.row.state}).
+
+${SITE_URL2}${photoUrl(filename)}
+
+Approve or reject it in the Admin Portal's Photos tab.`
+    );
+    res.status(201).json({ photos: await ownerPhotos(owner.row.id) });
+  } catch (err) {
+    console.error("Error uploading photo:", err);
+    res.status(500).json({ error: "Failed to upload the image." });
+  }
+});
+app.post("/api/owner/photos/:photoId/delete", ownerEditLimiter, async (req, res) => {
+  try {
+    const owner = await ownerListingFromToken(req.body?.token, res);
+    if (!owner) return;
+    const db = getPool();
+    const [rows] = await db.query("SELECT * FROM listing_photos WHERE id = ? AND listing_id = ?", [req.params.photoId, owner.row.id]);
+    const photo = rows[0];
+    if (!photo) return res.status(404).json({ error: "Photo not found." });
+    deletePhotoFile(photo.filename);
+    await db.query("DELETE FROM listing_photos WHERE id = ?", [photo.id]);
+    res.json({ photos: await ownerPhotos(owner.row.id) });
+  } catch (err) {
+    console.error("Error deleting photo:", err);
+    res.status(500).json({ error: "Failed to remove the image." });
+  }
+});
+app.get("/api/admin/photos", adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: "Database is not configured on server." });
+  const status = req.query.status === "approved" ? "approved" : "pending";
+  try {
+    await ensureSchema();
+    const [rows] = await db.query(
+      `SELECT p.*, l.name, l.city, l.state, l.featured FROM listing_photos p
+       LEFT JOIN listings l ON l.id = p.listing_id
+       WHERE p.status = ? ORDER BY p.created_at ${status === "pending" ? "ASC" : "DESC"}`,
+      [status]
+    );
+    res.json(
+      rows.map((p) => ({
+        id: p.id,
+        listingId: p.listing_id,
+        listingName: p.name || "(deleted listing)",
+        city: p.city || "",
+        state: p.state || "",
+        featured: !!p.featured,
+        kind: p.kind,
+        status: p.status,
+        url: photoUrl(p.filename),
+        uploadedBy: p.uploaded_by,
+        createdAt: p.created_at
+      }))
+    );
+  } catch (err) {
+    console.error("Error listing photos:", err);
+    res.status(500).json({ error: "Failed to load photos." });
+  }
+});
+app.post("/api/admin/photos/:id/:action", adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: "Database is not configured on server." });
+  const { id, action } = req.params;
+  if (!["approve", "reject", "remove"].includes(action)) return res.status(404).json({ error: "Unknown action." });
+  try {
+    await ensureSchema();
+    const [rows] = await db.query("SELECT * FROM listing_photos WHERE id = ?", [id]);
+    const photo = rows[0];
+    if (!photo) return res.status(404).json({ error: "Photo not found." });
+    if (action === "approve") {
+      await db.query("UPDATE listing_photos SET status = 'approved' WHERE id = ?", [id]);
+    } else if (action === "reject") {
+      deletePhotoFile(photo.filename);
+      await db.query("UPDATE listing_photos SET status = 'rejected' WHERE id = ?", [id]);
+    } else {
+      deletePhotoFile(photo.filename);
+      await db.query("DELETE FROM listing_photos WHERE id = ?", [id]);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Error updating photo:", err);
+    res.status(500).json({ error: "Failed to update the photo." });
   }
 });
 app.post("/api/admin/login", adminAuthLimiter, (req, res) => {
@@ -1969,7 +2188,7 @@ app.get("/api/cron/monthly-reports", adminAuthLimiter, async (req, res) => {
   if (!secret2) return res.status(503).json({ error: "CRON_SECRET is not set on the server." });
   const given = Buffer.from(String(req.query.key || ""));
   const expected = Buffer.from(secret2);
-  if (given.length !== expected.length || !import_crypto2.default.timingSafeEqual(given, expected)) {
+  if (given.length !== expected.length || !import_crypto3.default.timingSafeEqual(given, expected)) {
     return res.status(401).json({ error: "Wrong key." });
   }
   try {
@@ -2145,9 +2364,9 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = import_path.default.join(process.cwd(), "dist");
+    const distPath = import_path2.default.join(process.cwd(), "dist");
     app.use(import_express.default.static(distPath, { index: false }));
-    const indexHtml = import_fs.default.readFileSync(import_path.default.join(distPath, "index.html"), "utf8");
+    const indexHtml = import_fs2.default.readFileSync(import_path2.default.join(distPath, "index.html"), "utf8");
     app.get("*", async (req, res) => {
       const meta = await pageMeta(req.path).catch((err) => {
         console.error("Error building page meta:", err);
