@@ -48,7 +48,7 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
       transition={{ duration: 0.25 }}
       id={`listing-card-${listing.id}`}
       onClick={() => onSelect(listing)}
-      className={`group relative border-2 rounded-2xl p-5 shadow-sm hover:shadow-xl transition-all cursor-pointer flex flex-col justify-between overflow-hidden ${
+      className={`group relative border-2 rounded-2xl p-5 shadow-sm hover:shadow-xl transition-all cursor-pointer flex flex-col overflow-hidden ${
         featured
           ? 'bg-gradient-to-b from-amber-100/80 to-amber-50/60 dark:from-amber-950/40 dark:to-stone-900 border-amber-400 dark:border-amber-500/60 ring-2 ring-amber-400/20 shadow-amber-500/10'
           : 'bg-amber-50/40 dark:bg-stone-900 border-stone-200 dark:border-stone-800 hover:border-amber-300 dark:hover:border-amber-700'
@@ -96,7 +96,9 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
       </div>
 
       {/* Main Content Area */}
-      <div>
+      {/* flex-1: content stays at the top and the footer sits at the bottom when a row is
+          stretched to match a taller card (e.g. a featured card with a photo). */}
+      <div className="flex-1">
         {/* Category Badge */}
         <div className="mb-2">
           <span className="inline-block px-2.5 py-0.5 rounded-md text-xs font-medium bg-stone-100 dark:bg-stone-800 text-stone-700 dark:text-stone-300 border border-stone-200/60 dark:border-stone-700/60">
