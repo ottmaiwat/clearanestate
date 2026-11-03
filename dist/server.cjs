@@ -1496,6 +1496,7 @@ async function trustedOwnerEmails(listingRow) {
   const emails = [...claims.map((c) => c.claimant_email), listingRow.featured_email, listingRow.email];
   return new Set(emails.filter(Boolean).map((e) => e.trim().toLowerCase()));
 }
+var NO_LONGER_OWNER = "This email is no longer on file for this listing, so this link no longer works. Contact us if you think that is a mistake.";
 async function emailEditLink(listingRow, email) {
   const url = editLinkUrl(listingRow.id, email);
   if (!url) return false;
@@ -1583,6 +1584,7 @@ app.get("/api/owner/listing", async (req, res) => {
     const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [access.listingId]);
     const row = rows[0];
     if (!row) return res.status(404).json({ error: "This listing no longer exists." });
+    if (!(await trustedOwnerEmails(row)).has(access.email.toLowerCase())) return res.status(401).json({ error: NO_LONGER_OWNER });
     res.json({ listing: rowToListing(row), editorEmail: access.email });
   } catch (err) {
     console.error("Error loading listing for owner:", err);
@@ -1602,6 +1604,7 @@ app.post("/api/owner/listing", ownerEditLimiter, async (req, res) => {
     const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [access.listingId]);
     const before = rows[0];
     if (!before) return res.status(404).json({ error: "This listing no longer exists." });
+    if (!(await trustedOwnerEmails(before)).has(access.email.toLowerCase())) return res.status(401).json({ error: NO_LONGER_OWNER });
     const columns = Object.keys(values);
     await db.query(
       `UPDATE listings SET ${columns.map((c) => `${c} = ?`).join(", ")}, claimed = TRUE WHERE id = ?`,
@@ -1719,6 +1722,22 @@ app.post("/api/admin/listings/:id/toggle-featured", adminAuthLimiter, requireAdm
   } catch (err) {
     console.error("Error toggling featured status:", err);
     res.status(500).json({ error: "Failed to update listing.", details: err.message });
+  }
+});
+app.post("/api/admin/listings/:id/unclaim", adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: "Database is not configured on server." });
+  try {
+    await ensureSchema();
+    await db.query("UPDATE listings SET claimed = FALSE WHERE id = ?", [req.params.id]);
+    await db.query("UPDATE claim_requests SET status = 'revoked' WHERE listing_id = ? AND status = 'approved'", [req.params.id]);
+    const [rows] = await db.query("SELECT * FROM listings WHERE id = ?", [req.params.id]);
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: "Listing not found." });
+    res.json(rowToListing(row));
+  } catch (err) {
+    console.error("Error removing claim:", err);
+    res.status(500).json({ error: "Failed to remove the claim.", details: err.message });
   }
 });
 app.get("/api/admin/stats", adminAuthLimiter, requireAdmin, async (req, res) => {

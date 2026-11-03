@@ -69,6 +69,14 @@ export async function toggleFeaturedAdmin(id: string, password: string): Promise
   return parseJsonOrThrow(res);
 }
 
+export async function unclaimListingAdmin(id: string, password: string): Promise<Listing> {
+  const res = await fetch(`/api/admin/listings/${encodeURIComponent(id)}/unclaim`, {
+    method: 'POST',
+    headers: { 'x-admin-password': password },
+  });
+  return parseJsonOrThrow(res);
+}
+
 export async function deleteListingAdmin(id: string, password: string): Promise<void> {
   const res = await fetch(`/api/admin/listings/${encodeURIComponent(id)}`, {
     method: 'DELETE',

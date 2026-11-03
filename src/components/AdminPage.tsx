@@ -75,6 +75,7 @@ interface AdminPageProps {
   onApprovePending: (submissionId: string) => void;
   onRejectPending: (submissionId: string) => void;
   onToggleFeatured: (listingId: string) => void;
+  onUnclaimListing: (listingId: string) => void;
   onDeleteListing: (listingId: string) => void;
   onResetData: () => void;
   onBulkImport: (rows: BulkImportRow[]) => Promise<BulkImportResult>;
@@ -96,6 +97,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   onApprovePending,
   onRejectPending,
   onToggleFeatured,
+  onUnclaimListing,
   onDeleteListing,
   onResetData,
   onBulkImport,
@@ -387,6 +389,19 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                     <p className="text-stone-600 dark:text-stone-400">{listing.city}, {listing.state}</p>
                   </div>
                   <div className="flex gap-2">
+                    {listing.claimed && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Remove the claim on ${listing.name}? It goes back to unclaimed, and edit links sent to the claimant stop working.`)) {
+                            onUnclaimListing(listing.id);
+                          }
+                        }}
+                        className="flex items-center gap-2 px-3 py-2 rounded-lg bg-stone-100 dark:bg-stone-700 text-stone-700 dark:text-stone-200 hover:bg-stone-200 dark:hover:bg-stone-600 transition-colors font-bold text-sm"
+                        id={`unclaim-btn-${listing.id}`}
+                      >
+                        <UserCheck className="w-4 h-4" /> Remove claim
+                      </button>
+                    )}
                     <button
                       onClick={() => onToggleFeatured(listing.id)}
                       className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-200 hover:bg-amber-200 dark:hover:bg-amber-900/50 transition-colors font-bold text-sm"

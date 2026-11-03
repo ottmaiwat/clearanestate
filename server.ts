@@ -861,6 +861,10 @@ async function trustedOwnerEmails(listingRow: any): Promise<Set<string>> {
   return new Set(emails.filter(Boolean).map((e: string) => e.trim().toLowerCase()));
 }
 
+// An edit link only works while its email is still on file for the listing, so removing
+// a claim (Admin > Live Listings) shuts off links already sent to that address.
+const NO_LONGER_OWNER = 'This email is no longer on file for this listing, so this link no longer works. Contact us if you think that is a mistake.';
+
 async function emailEditLink(listingRow: any, email: string): Promise<boolean> {
   const url = editLinkUrl(listingRow.id, email);
   if (!url) return false;
@@ -963,6 +967,7 @@ app.get('/api/owner/listing', async (req, res) => {
     const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [access.listingId]);
     const row = (rows as any[])[0];
     if (!row) return res.status(404).json({ error: 'This listing no longer exists.' });
+    if (!(await trustedOwnerEmails(row)).has(access.email.toLowerCase())) return res.status(401).json({ error: NO_LONGER_OWNER });
     res.json({ listing: rowToListing(row), editorEmail: access.email });
   } catch (err: any) {
     console.error('Error loading listing for owner:', err);
@@ -987,6 +992,7 @@ app.post('/api/owner/listing', ownerEditLimiter, async (req, res) => {
     const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [access.listingId]);
     const before = (rows as any[])[0];
     if (!before) return res.status(404).json({ error: 'This listing no longer exists.' });
+    if (!(await trustedOwnerEmails(before)).has(access.email.toLowerCase())) return res.status(401).json({ error: NO_LONGER_OWNER });
 
     const columns = Object.keys(values);
     await db.query(
@@ -1123,6 +1129,27 @@ app.post('/api/admin/listings/:id/toggle-featured', adminAuthLimiter, requireAdm
   } catch (err: any) {
     console.error('Error toggling featured status:', err);
     res.status(500).json({ error: 'Failed to update listing.', details: err.message });
+  }
+});
+
+// Admin: remove a claim (a mistaken or test claim, or a business that changed hands).
+// The listing goes back to unclaimed and its approved claims are marked revoked, which
+// also stops any edit links sent to those addresses.
+app.post('/api/admin/listings/:id/unclaim', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+
+  try {
+    await ensureSchema();
+    await db.query('UPDATE listings SET claimed = FALSE WHERE id = ?', [req.params.id]);
+    await db.query("UPDATE claim_requests SET status = 'revoked' WHERE listing_id = ? AND status = 'approved'", [req.params.id]);
+    const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [req.params.id]);
+    const row = (rows as any[])[0];
+    if (!row) return res.status(404).json({ error: 'Listing not found.' });
+    res.json(rowToListing(row));
+  } catch (err: any) {
+    console.error('Error removing claim:', err);
+    res.status(500).json({ error: 'Failed to remove the claim.', details: err.message });
   }
 });
 

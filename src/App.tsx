@@ -41,6 +41,7 @@ import {
   approvePendingAdmin,
   rejectPendingAdmin,
   toggleFeaturedAdmin,
+  unclaimListingAdmin,
   deleteListingAdmin,
   fetchQuoteRequestsAdmin,
   fetchClaimsAdmin,
@@ -454,6 +455,18 @@ export default function App() {
     );
   };
 
+  // Remove a claim (admin only; needs the database)
+  const handleUnclaimListing = async (listingId: string) => {
+    if (!dbConfigured || !adminPassword) return;
+    try {
+      const updated = await unclaimListingAdmin(listingId, adminPassword);
+      setListings((prev) => prev.map((l) => (l.id === listingId ? updated : l)));
+    } catch (e) {
+      console.error('Failed to remove claim via API', e);
+      alert('Could not remove the claim. Please try again.');
+    }
+  };
+
   // Delete Listing
   const handleDeleteListing = async (listingId: string) => {
     if (dbConfigured && adminPassword) {
@@ -575,6 +588,7 @@ export default function App() {
         onApprovePending={handleApprovePending}
         onRejectPending={handleRejectPending}
         onToggleFeatured={handleToggleFeatured}
+        onUnclaimListing={handleUnclaimListing}
         onDeleteListing={handleDeleteListing}
         onResetData={resetAllData}
         onBulkImport={handleBulkImport}
