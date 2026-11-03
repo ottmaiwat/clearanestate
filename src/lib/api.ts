@@ -77,6 +77,29 @@ export async function deleteListingAdmin(id: string, password: string): Promise<
   await parseJsonOrThrow(res);
 }
 
+export type BulkImportRow = {
+  name: string;
+  category: string;
+  city: string;
+  state: string;
+  phone?: string;
+  website?: string;
+};
+
+export type BulkImportResult = {
+  imported: { row: number; id: string; name: string }[];
+  skipped: { row: number; reason: string }[];
+};
+
+export async function bulkImportListingsAdmin(rows: BulkImportRow[], password: string): Promise<BulkImportResult> {
+  const res = await fetch('/api/admin/listings/bulk-import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-admin-password': password },
+    body: JSON.stringify({ listings: rows }),
+  });
+  return parseJsonOrThrow(res);
+}
+
 export type QuoteRequestPayload = {
   listingId: string;
   listingName: string;
@@ -148,4 +171,69 @@ export async function rejectClaimAdmin(id: string, password: string): Promise<vo
     headers: { 'x-admin-password': password },
   });
   await parseJsonOrThrow(res);
+}
+
+export type Subscription = {
+  listingId: string;
+  listingName: string;
+  city: string;
+  state: string;
+  featured: boolean;
+  subscriptionId: string;
+  status: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean | null;
+  amount: number | null;
+  error?: string;
+};
+
+export async function fetchSubscriptionsAdmin(password: string): Promise<Subscription[]> {
+  const res = await fetch('/api/admin/subscriptions', {
+    headers: { 'x-admin-password': password },
+  });
+  return parseJsonOrThrow(res);
+}
+
+export type TrackEventType = 'page_view' | 'listing_view' | 'call' | 'website';
+
+// Fire-and-forget traffic event. sendBeacon survives the page unloading (a tel: link or a
+// website click often navigates away immediately), and falls back to a keepalive fetch.
+export function trackEvent(type: TrackEventType, listingId?: string): void {
+  try {
+    const body = JSON.stringify({ type, listingId, path: window.location.pathname });
+    const blob = new Blob([body], { type: 'application/json' });
+    if (navigator.sendBeacon && navigator.sendBeacon('/api/track', blob)) return;
+    fetch('/api/track', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, keepalive: true }).catch(() => {});
+  } catch {
+    // Tracking must never break the page.
+  }
+}
+
+export type TrafficStats = {
+  days: number;
+  pageViews: number;
+  visitors: number;
+  listingViews: number;
+  calls: number;
+  websiteClicks: number;
+  quoteRequests: number;
+  daily: { day: string; visitors: number; contacts: number }[];
+  topListings: {
+    listingId: string;
+    name: string;
+    city: string;
+    state: string;
+    featured: boolean;
+    views: number;
+    calls: number;
+    websiteClicks: number;
+  }[];
+  topPages: { path: string; views: number }[];
+};
+
+export async function fetchTrafficStatsAdmin(password: string, days = 30): Promise<TrafficStats> {
+  const res = await fetch(`/api/admin/stats?days=${days}`, {
+    headers: { 'x-admin-password': password },
+  });
+  return parseJsonOrThrow(res);
 }

@@ -94,7 +94,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
               <section>
                 <h3 className="font-bold text-sm mb-1">Cookies and Tracking</h3>
                 <p>
-                  We do not currently use analytics, advertising, or tracking cookies. If that changes — for example, if we add site analytics — we will update this policy to describe what's collected and, where required, seek your consent first.
+                  We do not use advertising or tracking cookies, and we don't use third-party analytics. To show businesses how much attention their listing gets, our own server counts page views and clicks on a listing's call and website buttons. For each event we record the page, the listing, the time, and a short code generated from your IP address and browser type that changes every day. We never store your IP address itself, and the code can't be used to identify you or follow you from one day to the next.
                 </p>
               </section>
 

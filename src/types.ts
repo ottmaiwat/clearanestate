@@ -61,6 +61,7 @@ export interface QuoteRequest {
   projectScope: string;
   timeline: string;
   notes: string;
+  emailed: boolean;
   submittedAt: string;
 }
 

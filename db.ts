@@ -118,6 +118,22 @@ export function ensureSchema(): Promise<void> {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    // First-party traffic counter: page views, listing views, and contact clicks (call /
+    // website). visitor_hash is a daily-rotating hash of IP + user agent, never the raw
+    // values, so we can count unique visitors without cookies or storing personal data.
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS listing_events (
+        id BIGINT AUTO_INCREMENT PRIMARY KEY,
+        event_type VARCHAR(20) NOT NULL,
+        listing_id VARCHAR(64),
+        page_path VARCHAR(255),
+        visitor_hash CHAR(16) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_events_created (created_at),
+        INDEX idx_events_listing (listing_id, created_at)
+      )
+    `);
   })();
 
   return schemaReady;

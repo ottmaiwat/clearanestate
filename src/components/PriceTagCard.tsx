@@ -1,5 +1,6 @@
 import React from 'react';
 import { Listing } from '../types';
+import { trackEvent } from '../lib/api';
 import { Phone, Globe, MapPin, Star, ShieldCheck, Sparkles, ArrowRight, Bookmark } from 'lucide-react';
 import { motion } from 'motion/react';
 
@@ -123,9 +124,15 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
           </div>
 
           <div className="flex items-center gap-1 font-semibold text-stone-800 dark:text-stone-200">
-            <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-            <span>{listing.rating.toFixed(1)}</span>
-            <span className="text-stone-400 font-normal">({listing.reviewCount})</span>
+            {listing.reviewCount > 0 ? (
+              <>
+                <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                <span>{listing.rating.toFixed(1)}</span>
+                <span className="text-stone-400 font-normal">({listing.reviewCount})</span>
+              </>
+            ) : (
+              <span className="text-stone-400 font-normal italic">Not yet rated</span>
+            )}
           </div>
         </div>
 
@@ -133,7 +140,10 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
           {listing.phone ? (
             <a
               href={`tel:${listing.phone.replace(/[^\d+]/g, '')}`}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                trackEvent('call', listing.id);
+              }}
               className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-stone-900 text-stone-50 hover:bg-amber-600 dark:bg-stone-800 dark:hover:bg-amber-600 transition-colors shadow-xs"
               id={`call-btn-${listing.id}`}
             >
@@ -145,7 +155,10 @@ export const PriceTagCard: React.FC<PriceTagCardProps> = ({
               href={listing.website}
               target="_blank"
               rel="noopener noreferrer"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                trackEvent('website', listing.id);
+              }}
               className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-stone-100 text-stone-800 hover:bg-stone-200 dark:bg-stone-800 dark:text-stone-200 dark:hover:bg-stone-700 transition-colors"
               id={`website-btn-${listing.id}`}
             >

@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Listing } from '../types';
+import { trackEvent } from '../lib/api';
 import {
   X,
   Phone,
@@ -35,6 +36,12 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   onRequestQuote,
   onGetFeatured,
 }) => {
+  // The page title/description for an open listing is set by App (see pageMeta there).
+  const listingId = listing?.id;
+  useEffect(() => {
+    if (listingId) trackEvent('listing_view', listingId);
+  }, [listingId]);
+
   if (!listing) return null;
 
   return (
@@ -72,9 +79,9 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <span className="inline-block px-3 py-1 rounded-full text-xs font-semibold bg-amber-200/80 dark:bg-amber-950 dark:text-amber-300 text-amber-900 mb-2">
                   {listing.category}
                 </span>
-                <h2 className="text-2xl sm:text-3xl font-serif font-bold text-stone-900 dark:text-stone-50">
+                <h1 className="text-2xl sm:text-3xl font-serif font-bold text-stone-900 dark:text-stone-50">
                   {listing.name}
-                </h2>
+                </h1>
                 <p className="text-stone-700 dark:text-stone-300 italic font-serif mt-1">
                   "{listing.tagline}"
                 </p>
@@ -104,8 +111,14 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
               <div>
                 <span className="text-xs text-stone-500 dark:text-stone-400 block">Rating & Reviews</span>
                 <span className="font-semibold text-sm flex items-center gap-1 mt-0.5">
-                  <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
-                  {listing.rating.toFixed(1)} ({listing.reviewCount} reviews)
+                  {listing.reviewCount > 0 ? (
+                    <>
+                      <Star className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                      {listing.rating.toFixed(1)} ({listing.reviewCount} reviews)
+                    </>
+                  ) : (
+                    <span className="italic text-stone-500 dark:text-stone-400 font-normal">Not yet rated</span>
+                  )}
                 </span>
               </div>
 
@@ -114,6 +127,9 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
                 <div className="flex items-center gap-2 mt-0.5 text-xs font-medium text-emerald-700 dark:text-emerald-400">
                   {listing.insured && <span className="flex items-center gap-0.5"><ShieldCheck className="w-3.5 h-3.5" /> Insured</span>}
                   {listing.bonded && <span className="flex items-center gap-0.5"><Award className="w-3.5 h-3.5" /> Bonded</span>}
+                  {!listing.insured && !listing.bonded && (
+                    <span className="italic text-stone-500 dark:text-stone-400 font-normal">Not yet verified</span>
+                  )}
                 </div>
               </div>
 
@@ -166,25 +182,66 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
               </div>
 
               <div className="p-4 rounded-xl bg-amber-100/50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/50 flex flex-col justify-between">
-                <div>
-                  <h4 className="text-xs font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
-                    <Building2 className="w-4 h-4 text-amber-600" /> Direct Contact
-                  </h4>
-                  <p className="text-xs text-stone-600 dark:text-stone-300">
-                    Reach out directly for cleanout estimates, senior move quotes, or estate sale appraisals.
-                  </p>
-                </div>
-                
-                <div className="mt-3 flex items-center gap-2">
-                  <button
-                    onClick={() => onRequestQuote(listing)}
-                    className="flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors flex items-center justify-center gap-1.5 shadow-xs"
-                    id="request-quote-btn"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                    Request Free Estimate
-                  </button>
-                </div>
+                {listing.claimed ? (
+                  <>
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                        <Building2 className="w-4 h-4 text-amber-600" /> Direct Contact
+                      </h4>
+                      <p className="text-xs text-stone-600 dark:text-stone-300">
+                        Reach out directly for cleanout estimates, senior move quotes, or estate sale appraisals.
+                      </p>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2">
+                      <button
+                        onClick={() => onRequestQuote(listing)}
+                        className="flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                        id="request-quote-btn"
+                      >
+                        <Send className="w-3.5 h-3.5" />
+                        Request Free Estimate
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <h4 className="text-xs font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                        <Building2 className="w-4 h-4 text-amber-600" /> Unverified Listing
+                      </h4>
+                      <p className="text-xs text-stone-600 dark:text-stone-300">
+                        This business hasn't claimed or verified this listing yet, so we can't guarantee a request here reaches them. Contact them directly instead.
+                      </p>
+                    </div>
+
+                    <div className="mt-3 flex items-center gap-2">
+                      {listing.phone ? (
+                        <a
+                          href={`tel:${listing.phone.replace(/[^\d+]/g, '')}`}
+                          onClick={() => trackEvent('call', listing.id)}
+                          className="flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-stone-900 text-stone-50 hover:bg-amber-600 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-amber-500 transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <Phone className="w-3.5 h-3.5" />
+                          Call {listing.phone}
+                        </a>
+                      ) : listing.website ? (
+                        <a
+                          href={listing.website}
+                          onClick={() => trackEvent('website', listing.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex-1 py-2 px-3 rounded-lg text-xs font-bold bg-stone-900 text-stone-50 hover:bg-amber-600 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-amber-500 transition-colors flex items-center justify-center gap-1.5 shadow-xs"
+                        >
+                          <Globe className="w-3.5 h-3.5" />
+                          Visit Website
+                        </a>
+                      ) : (
+                        <p className="text-xs text-stone-500 dark:text-stone-400 italic">No contact info available yet.</p>
+                      )}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
 
@@ -244,6 +301,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
               {listing.phone && (
                 <a
                   href={`tel:${listing.phone.replace(/[^\d+]/g, '')}`}
+                  onClick={() => trackEvent('call', listing.id)}
                   className="px-4 py-2 rounded-xl text-xs font-bold bg-stone-900 text-stone-50 hover:bg-amber-600 dark:bg-stone-100 dark:text-stone-900 dark:hover:bg-amber-500 transition-colors flex items-center gap-1.5"
                   id="modal-phone-btn"
                 >
@@ -254,6 +312,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
 
               <a
                 href={listing.website}
+                onClick={() => trackEvent('website', listing.id)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-stone-950 transition-colors flex items-center gap-1.5 shadow-xs"

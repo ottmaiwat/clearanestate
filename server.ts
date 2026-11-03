@@ -1,16 +1,24 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
+import crypto from 'crypto';
 import { createServer as createViteServer } from 'vite';
 import Stripe from 'stripe';
 import dotenv from 'dotenv';
 import rateLimit from 'express-rate-limit';
 import { getPool, ensureSchema, isDbConfigured } from './db';
 import { sendMail, isMailConfigured } from './mailer';
+import { listingPath } from './src/lib/slug';
+import { landingPaths, parseLandingPath, citySlug, landingTitle, landingDescription } from './src/lib/locations';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+// Same public origin used for Stripe checkout redirects - reused here so sitemap/canonical
+// URLs and robots.txt always point at the actual deployed domain.
+const SITE_URL = (process.env.APP_URL || 'https://clearanestate.com').replace(/\/$/, '');
 
 // Behind Passenger/nginx/a reverse proxy (as on Namecheap cPanel), the real client IP is
 // in X-Forwarded-For - trust the first hop so rate limiting keys off the actual visitor,
@@ -225,6 +233,21 @@ app.post('/api/stripe/create-checkout-session', async (req, res) => {
 
 // ---- Directory Listings API (MySQL-backed, falls back to 404 if not configured) ----
 
+// mysql2 auto-deserializes native JSON columns into real arrays/objects, but if a row ever
+// comes back with the value still as a raw string (e.g. a different driver/config), this
+// handles both cases instead of double-parsing an already-parsed array.
+function parseServices(value: any): string[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === 'string' && value) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function rowToListing(row: any) {
   return {
     id: row.id,
@@ -237,7 +260,7 @@ function rowToListing(row: any) {
     website: row.website,
     email: row.email || undefined,
     description: row.description,
-    services: row.services ? JSON.parse(row.services) : [],
+    services: parseServices(row.services),
     featured: !!row.featured,
     rating: Number(row.rating),
     reviewCount: row.review_count,
@@ -266,7 +289,7 @@ function rowToPending(row: any) {
     email: row.email,
     contactName: row.contact_name,
     description: row.description,
-    services: row.services ? JSON.parse(row.services) : [],
+    services: parseServices(row.services),
     submittedAt:
       row.submitted_at instanceof Date
         ? row.submitted_at.toISOString().split('T')[0]
@@ -292,6 +315,109 @@ app.get('/api/listings', async (req, res) => {
   } catch (err: any) {
     console.error('Error fetching listings:', err);
     res.status(500).json({ error: 'Failed to fetch listings.' });
+  }
+});
+
+// Public: XML sitemap - lists the homepage plus every live listing's canonical URL, so
+// Google can discover and index listing pages directly instead of relying on crawling
+// through the client-rendered grid. Regenerated per-request (cheap query, short cache)
+// rather than written to disk, since listings change independently of deploys.
+app.get('/sitemap.xml', async (req, res) => {
+  res.type('application/xml');
+  res.set('Cache-Control', 'public, max-age=3600');
+
+  const urls: { loc: string; lastmod?: string }[] = [{ loc: `${SITE_URL}/` }];
+
+  const db = getPool();
+  if (db) {
+    try {
+      await ensureSchema();
+      const [rows] = await db.query('SELECT id, name, city, state, category, created_at FROM listings');
+      for (const landing of landingPaths(rows as any[])) {
+        urls.push({ loc: `${SITE_URL}${landing}` });
+      }
+      for (const row of rows as any[]) {
+        urls.push({
+          loc: `${SITE_URL}${listingPath(row)}`,
+          lastmod: row.created_at instanceof Date
+            ? row.created_at.toISOString().split('T')[0]
+            : String(row.created_at).split('T')[0],
+        });
+      }
+    } catch (err) {
+      console.error('Error building sitemap:', err);
+    }
+  }
+
+  const body =
+    `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urls
+      .map(
+        (u) =>
+          `  <url>\n    <loc>${u.loc}</loc>\n` +
+          (u.lastmod ? `    <lastmod>${u.lastmod}</lastmod>\n` : '') +
+          `  </url>`
+      )
+      .join('\n') +
+    `\n</urlset>\n`;
+
+  res.send(body);
+});
+
+// Public: robots.txt - allow everything except the JSON API, and point crawlers at the sitemap.
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send(`User-agent: *\nAllow: /\nDisallow: /api/\n\nSitemap: ${SITE_URL}/sitemap.xml\n`);
+});
+
+// ---- First-party traffic tracking ----
+
+const TRACK_EVENT_TYPES = new Set(['page_view', 'listing_view', 'call', 'website']);
+const BOT_UA = /bot|crawl|spider|slurp|preview|facebookexternalhit|headless|lighthouse|pingdom|uptime/i;
+
+// Generous per-IP cap - real visitors fire a handful of events per page, so this only
+// stops a script from flooding the table.
+const trackLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 120,
+  standardHeaders: false,
+  legacyHeaders: false,
+  handler: (req, res) => res.status(204).end(),
+});
+
+// Daily-rotating, one-way hash of IP + user agent: enough to count unique visitors per day
+// without cookies, and the raw IP is never stored.
+function visitorHash(req: express.Request): string {
+  const day = new Date().toISOString().split('T')[0];
+  return crypto
+    .createHash('sha256')
+    .update(`${day}|${process.env.ADMIN_PASSWORD || ''}|${req.ip}|${req.get('user-agent') || ''}`)
+    .digest('hex')
+    .slice(0, 16);
+}
+
+// Public: record a page view or contact click. Always answers 204 (even when ignored) so
+// the browser's sendBeacon never retries and bots learn nothing.
+app.post('/api/track', trackLimiter, async (req, res) => {
+  res.status(204).end();
+
+  const db = getPool();
+  const type = String(req.body?.type || '');
+  if (!db || !TRACK_EVENT_TYPES.has(type) || BOT_UA.test(req.get('user-agent') || '')) return;
+
+  const listingId = typeof req.body?.listingId === 'string' ? req.body.listingId.slice(0, 64) : null;
+  if (type !== 'page_view' && !listingId) return;
+  const pagePath = typeof req.body?.path === 'string' ? req.body.path.slice(0, 255) : null;
+
+  try {
+    await ensureSchema();
+    await db.query(
+      'INSERT INTO listing_events (event_type, listing_id, page_path, visitor_hash) VALUES (?, ?, ?, ?)',
+      [type, listingId, pagePath, visitorHash(req)]
+    );
+  } catch (err) {
+    console.error('Error recording tracking event:', err);
   }
 });
 
@@ -374,6 +500,7 @@ function rowToQuote(row: any) {
     projectScope: row.project_scope,
     timeline: row.timeline,
     notes: row.notes || '',
+    emailed: !!row.emailed_to_business,
     submittedAt:
       row.created_at instanceof Date
         ? row.created_at.toISOString().split('T')[0]
@@ -589,7 +716,7 @@ app.post('/api/admin/pending/:id/approve', adminAuthLimiter, requireAdmin, async
         target.website,
         target.email,
         target.description,
-        target.services,
+        JSON.stringify(parseServices(target.services)),
         'Mon-Fri: 8:00 AM - 6:00 PM',
         createdAt,
       ]
@@ -601,7 +728,7 @@ app.post('/api/admin/pending/:id/approve', adminAuthLimiter, requireAdmin, async
     res.json(rowToListing((newRows as any[])[0]));
   } catch (err: any) {
     console.error('Error approving submission:', err);
-    res.status(500).json({ error: 'Failed to approve submission.' });
+    res.status(500).json({ error: 'Failed to approve submission.', details: err.message });
   }
 });
 
@@ -616,7 +743,7 @@ app.post('/api/admin/pending/:id/reject', adminAuthLimiter, requireAdmin, async 
     res.json({ ok: true });
   } catch (err: any) {
     console.error('Error rejecting submission:', err);
-    res.status(500).json({ error: 'Failed to reject submission.' });
+    res.status(500).json({ error: 'Failed to reject submission.', details: err.message });
   }
 });
 
@@ -634,7 +761,251 @@ app.post('/api/admin/listings/:id/toggle-featured', adminAuthLimiter, requireAdm
     res.json(rowToListing(row));
   } catch (err: any) {
     console.error('Error toggling featured status:', err);
-    res.status(500).json({ error: 'Failed to update listing.' });
+    res.status(500).json({ error: 'Failed to update listing.', details: err.message });
+  }
+});
+
+// Admin: list every listing with a Stripe subscription on file (past or present Featured
+// upgrades), pulling live status/renewal date from Stripe so the admin doesn't have to
+// cross-reference the Stripe dashboard by hand. Read-only - never writes back to Stripe or
+// the database. If a subscription can't be fetched (bad ID, Stripe not configured), that
+// row is still returned with an `error` field instead of failing the whole list.
+// Admin: traffic report for the last N days - totals, a per-day series, the listings that
+// got the most contacts, and the most-viewed pages.
+app.get('/api/admin/stats', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+
+  const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+
+  try {
+    await ensureSchema();
+    const since = 'created_at >= DATE_SUB(CURRENT_TIMESTAMP, INTERVAL ? DAY)';
+
+    const [[totals]] = (await db.query(
+      `SELECT
+         SUM(event_type = 'page_view') AS pageViews,
+         COUNT(DISTINCT visitor_hash, DATE(created_at)) AS visitors,
+         SUM(event_type = 'listing_view') AS listingViews,
+         SUM(event_type = 'call') AS calls,
+         SUM(event_type = 'website') AS websiteClicks
+       FROM listing_events WHERE ${since}`,
+      [days]
+    )) as any;
+
+    const [[quoteTotals]] = (await db.query(
+      `SELECT COUNT(*) AS quotes FROM quote_requests WHERE ${since}`,
+      [days]
+    )) as any;
+
+    const [daily] = await db.query(
+      `SELECT DATE(created_at) AS day,
+         COUNT(DISTINCT visitor_hash) AS visitors,
+         SUM(event_type IN ('call', 'website')) AS contacts
+       FROM listing_events WHERE ${since}
+       GROUP BY DATE(created_at) ORDER BY day`,
+      [days]
+    );
+
+    const [topListings] = await db.query(
+      `SELECT e.listing_id AS listingId, l.name, l.city, l.state, l.featured,
+         SUM(e.event_type = 'listing_view') AS views,
+         SUM(e.event_type = 'call') AS calls,
+         SUM(e.event_type = 'website') AS websiteClicks
+       FROM listing_events e LEFT JOIN listings l ON l.id = e.listing_id
+       WHERE e.listing_id IS NOT NULL AND e.${since}
+       GROUP BY e.listing_id, l.name, l.city, l.state, l.featured
+       ORDER BY (SUM(e.event_type = 'call') + SUM(e.event_type = 'website')) DESC, views DESC
+       LIMIT 25`,
+      [days]
+    );
+
+    const [topPages] = await db.query(
+      `SELECT page_path AS path, COUNT(*) AS views
+       FROM listing_events WHERE event_type = 'page_view' AND ${since}
+       GROUP BY page_path ORDER BY views DESC LIMIT 25`,
+      [days]
+    );
+
+    // MySQL hands back SUM()/COUNT() as strings or BigInt depending on driver settings.
+    const n = (v: any) => Number(v) || 0;
+    res.json({
+      days,
+      pageViews: n(totals?.pageViews),
+      visitors: n(totals?.visitors),
+      listingViews: n(totals?.listingViews),
+      calls: n(totals?.calls),
+      websiteClicks: n(totals?.websiteClicks),
+      quoteRequests: n(quoteTotals?.quotes),
+      daily: (daily as any[]).map((d) => ({
+        day: d.day instanceof Date ? d.day.toISOString().split('T')[0] : String(d.day).split('T')[0],
+        visitors: n(d.visitors),
+        contacts: n(d.contacts),
+      })),
+      topListings: (topListings as any[]).map((r) => ({
+        listingId: r.listingId,
+        name: r.name || '(deleted listing)',
+        city: r.city || '',
+        state: r.state || '',
+        featured: !!r.featured,
+        views: n(r.views),
+        calls: n(r.calls),
+        websiteClicks: n(r.websiteClicks),
+      })),
+      topPages: (topPages as any[]).map((r) => ({ path: r.path || '/', views: n(r.views) })),
+    });
+  } catch (err: any) {
+    console.error('Error building traffic stats:', err);
+    res.status(500).json({ error: 'Failed to load traffic stats.', details: err.message });
+  }
+});
+
+app.get('/api/admin/subscriptions', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+
+  try {
+    await ensureSchema();
+    const [rows] = await db.query(
+      "SELECT id, name, city, state, featured, stripe_subscription_id FROM listings WHERE stripe_subscription_id IS NOT NULL AND stripe_subscription_id != ''"
+    );
+
+    const stripe = getStripe();
+
+    const subscriptions = await Promise.all(
+      (rows as any[]).map(async (row) => {
+        const base = {
+          listingId: row.id,
+          listingName: row.name,
+          city: row.city,
+          state: row.state,
+          featured: !!row.featured,
+          subscriptionId: row.stripe_subscription_id,
+        };
+
+        if (!stripe) {
+          return { ...base, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: null, amount: null, error: 'Stripe is not configured on server.' };
+        }
+
+        try {
+          const sub: any = await stripe.subscriptions.retrieve(row.stripe_subscription_id);
+          const item = sub.items?.data?.[0];
+          // Stripe moved current_period_end from the subscription to the item level in
+          // newer API versions - check both so this keeps working either way.
+          const periodEndUnix = sub.current_period_end ?? item?.current_period_end;
+
+          return {
+            ...base,
+            status: sub.status,
+            currentPeriodEnd: periodEndUnix ? new Date(periodEndUnix * 1000).toISOString().split('T')[0] : null,
+            cancelAtPeriodEnd: !!sub.cancel_at_period_end,
+            amount: item?.price?.unit_amount ?? null,
+          };
+        } catch (err: any) {
+          return { ...base, status: null, currentPeriodEnd: null, cancelAtPeriodEnd: null, amount: null, error: err.message };
+        }
+      })
+    );
+
+    res.json(subscriptions);
+  } catch (err: any) {
+    console.error('Error fetching subscriptions:', err);
+    res.status(500).json({ error: 'Failed to fetch subscriptions.', details: err.message });
+  }
+});
+
+const VALID_CATEGORIES = [
+  'Estate Cleanouts',
+  'Senior Move Management',
+  'Junk Removal & Hauling',
+  'Liquidation & Estate Sales',
+  'Content Appraisal & Downsizing',
+];
+
+function normalizeCategory(value: string): string | null {
+  const match = VALID_CATEGORIES.find((c) => c.toLowerCase() === value.trim().toLowerCase());
+  return match || null;
+}
+
+// Admin: bulk-import real businesses the admin has found/researched themselves (e.g. from
+// public directories), as distinct from the public "Submit Free Listing" flow. These are
+// NOT self-submitted by the business, so we deliberately do NOT stamp fake insured/bonded/
+// rating values on them the way an approved self-submission gets - they're inserted as
+// unclaimed and unverified until the actual business claims the listing.
+app.post('/api/admin/listings/bulk-import', adminAuthLimiter, requireAdmin, async (req, res) => {
+  const db = getPool();
+  if (!db) return res.status(503).json({ error: 'Database is not configured on server.' });
+
+  const { listings } = req.body;
+  if (!Array.isArray(listings) || listings.length === 0) {
+    return res.status(400).json({ error: 'No listings provided.' });
+  }
+  if (listings.length > 200) {
+    return res.status(400).json({ error: 'Limit 200 listings per import batch.' });
+  }
+
+  const imported: any[] = [];
+  const skipped: { row: number; reason: string }[] = [];
+
+  try {
+    await ensureSchema();
+
+    for (let i = 0; i < listings.length; i++) {
+      const raw = listings[i];
+      const name = (raw.name || '').trim();
+      const city = (raw.city || '').trim();
+      const state = (raw.state || '').trim().toUpperCase();
+      const category = normalizeCategory(raw.category || '');
+
+      if (!name || !city || !state) {
+        skipped.push({ row: i + 1, reason: 'Missing required field (name, city, or state).' });
+        continue;
+      }
+      if (!category) {
+        skipped.push({ row: i + 1, reason: `Unrecognized category "${raw.category}".` });
+        continue;
+      }
+
+      const [existingRows] = await db.query(
+        'SELECT id FROM listings WHERE LOWER(name) = LOWER(?) AND LOWER(city) = LOWER(?) AND state = ?',
+        [name, city, state]
+      );
+      if ((existingRows as any[]).length > 0) {
+        skipped.push({ row: i + 1, reason: `"${name}" in ${city}, ${state} already exists - skipped to avoid a duplicate.` });
+        continue;
+      }
+
+      const id = 'l-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
+      const createdAt = new Date().toISOString().split('T')[0];
+      const tagline = `${category} serving ${city}, ${state}`;
+      const description = `${name} has not yet claimed or verified this listing. Details shown here are from public research, not confirmed by the business.`;
+
+      await db.query(
+        `INSERT INTO listings
+          (id, name, tagline, category, city, state, phone, website, description, services, featured, rating, review_count, insured, bonded, claimed, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, false, 0, 0, false, false, false, ?)`,
+        [
+          id,
+          name,
+          tagline,
+          category,
+          city,
+          state,
+          (raw.phone || '').trim(),
+          (raw.website || '').trim(),
+          description,
+          JSON.stringify([]),
+          createdAt,
+        ]
+      );
+
+      imported.push({ row: i + 1, id, name });
+    }
+
+    res.status(201).json({ imported, skipped });
+  } catch (err: any) {
+    console.error('Error bulk-importing listings:', err);
+    res.status(500).json({ error: 'Bulk import failed.', details: err.message, imported, skipped });
   }
 });
 
@@ -649,7 +1020,7 @@ app.get('/api/admin/quotes', adminAuthLimiter, requireAdmin, async (req, res) =>
     res.json((rows as any[]).map(rowToQuote));
   } catch (err: any) {
     console.error('Error fetching quote requests:', err);
-    res.status(500).json({ error: 'Failed to fetch quote requests.' });
+    res.status(500).json({ error: 'Failed to fetch quote requests.', details: err.message });
   }
 });
 
@@ -664,7 +1035,7 @@ app.get('/api/admin/claims', adminAuthLimiter, requireAdmin, async (req, res) =>
     res.json((rows as any[]).map(rowToClaim));
   } catch (err: any) {
     console.error('Error fetching claim requests:', err);
-    res.status(500).json({ error: 'Failed to fetch claim requests.' });
+    res.status(500).json({ error: 'Failed to fetch claim requests.', details: err.message });
   }
 });
 
@@ -685,7 +1056,7 @@ app.post('/api/admin/claims/:id/approve', adminAuthLimiter, requireAdmin, async 
     res.json({ ok: true });
   } catch (err: any) {
     console.error('Error approving claim request:', err);
-    res.status(500).json({ error: 'Failed to approve claim request.' });
+    res.status(500).json({ error: 'Failed to approve claim request.', details: err.message });
   }
 });
 
@@ -700,7 +1071,7 @@ app.post('/api/admin/claims/:id/reject', adminAuthLimiter, requireAdmin, async (
     res.json({ ok: true });
   } catch (err: any) {
     console.error('Error rejecting claim request:', err);
-    res.status(500).json({ error: 'Failed to reject claim request.' });
+    res.status(500).json({ error: 'Failed to reject claim request.', details: err.message });
   }
 });
 
@@ -715,9 +1086,80 @@ app.delete('/api/admin/listings/:id', adminAuthLimiter, requireAdmin, async (req
     res.json({ ok: true });
   } catch (err: any) {
     console.error('Error deleting listing:', err);
-    res.status(500).json({ error: 'Failed to delete listing.' });
+    res.status(500).json({ error: 'Failed to delete listing.', details: err.message });
   }
 });
+
+// ---- Server-side page meta ----
+// The app is client-rendered, so without this every URL would ship the homepage's
+// <title>/description until JavaScript runs. Filling them in here means search engines and
+// link-preview bots see the right text for landing pages and listing pages immediately.
+
+interface PageMeta {
+  title: string;
+  description: string;
+  canonicalPath: string;
+  notFound?: boolean;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function applyMeta(html: string, meta: PageMeta): string {
+  const title = escapeHtml(meta.title);
+  const description = escapeHtml(meta.description);
+  const extra = meta.notFound
+    ? '<meta name="robots" content="noindex" />'
+    : `<link rel="canonical" href="${escapeHtml(SITE_URL + meta.canonicalPath)}" />\n` +
+      `    <meta property="og:title" content="${title}" />\n` +
+      `    <meta property="og:description" content="${description}" />\n` +
+      `    <meta property="og:url" content="${escapeHtml(SITE_URL + meta.canonicalPath)}" />`;
+  return html
+    .replace(/<title>[^<]*<\/title>/, `<title>${title}</title>\n    ${extra}`)
+    .replace(/<meta name="description" content="[^"]*"\s*\/?>/, `<meta name="description" content="${description}" />`);
+}
+
+async function pageMeta(pathname: string): Promise<PageMeta | null> {
+  const db = getPool();
+  if (!db) return null;
+
+  const listingMatch = pathname.match(/^\/listings\/([^/]+)/);
+  if (listingMatch) {
+    await ensureSchema();
+    const [rows] = await db.query('SELECT * FROM listings WHERE id = ?', [listingMatch[1]]);
+    const row = (rows as any[])[0];
+    if (!row) return { title: 'Listing not found | ClearAnEstate.com', description: '', canonicalPath: pathname, notFound: true };
+    return {
+      title: `${row.name} - ${row.category} in ${row.city}, ${row.state} | ClearAnEstate.com`,
+      description: `${row.name} - ${row.tagline || row.description || `${row.category} services in ${row.city}, ${row.state}`}`.slice(0, 160),
+      canonicalPath: listingPath(row),
+    };
+  }
+
+  const landing = parseLandingPath(pathname);
+  if (!landing) return null;
+
+  await ensureSchema();
+  const params: any[] = [landing.stateCode];
+  let sql = 'SELECT city FROM listings WHERE state = ?';
+  if (landing.service.category) {
+    sql += ' AND category = ?';
+    params.push(landing.service.category);
+  }
+  const [rows] = await db.query(sql, params);
+  const matching = (rows as any[]).filter((r) => !landing.citySlug || citySlug(r.city) === landing.citySlug);
+  const cityName = landing.citySlug ? matching[0]?.city ?? null : null;
+
+  if (matching.length === 0) {
+    return { title: 'No listings here yet | ClearAnEstate.com', description: '', canonicalPath: pathname, notFound: true };
+  }
+  return {
+    title: `${landingTitle(landing, cityName)} | ClearAnEstate.com`,
+    description: landingDescription(landing, cityName, matching.length),
+    canonicalPath: pathname.toLowerCase().replace(/\/+$/, ''),
+  };
+}
 
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
@@ -728,9 +1170,14 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    app.use(express.static(distPath, { index: false }));
+    const indexHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+    app.get('*', async (req, res) => {
+      const meta = await pageMeta(req.path).catch((err) => {
+        console.error('Error building page meta:', err);
+        return null;
+      });
+      res.status(meta?.notFound ? 404 : 200).type('html').send(meta ? applyMeta(indexHtml, meta) : indexHtml);
     });
   }
 

@@ -1,12 +1,26 @@
 import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Listing, PendingSubmission, QuoteRequest, ClaimRequest, ListingCategory, FilterState } from './types';
 import { INITIAL_LISTINGS, INITIAL_PENDING, DEFAULT_STRIPE_PAYMENT_LINK } from './data/seedListings';
+import { listingPath } from './lib/slug';
+import { useDocumentMeta } from './lib/useDocumentMeta';
+import {
+  parseLandingPath,
+  landingTitle,
+  landingDescription,
+  stateName,
+  statePath,
+  stateSlug,
+  citySlug,
+  serviceForCategory,
+  ALL_SERVICES_SLUG,
+} from './lib/locations';
+import { LocationLinks } from './components/LocationLinks';
 import { Header } from './components/Header';
 import { PriceTagCard } from './components/PriceTagCard';
 import { ListingDetailModal } from './components/ListingDetailModal';
 import { SubmitListingModal } from './components/SubmitListingModal';
 import { GetFeaturedModal } from './components/GetFeaturedModal';
-import { AdminModal } from './components/AdminModal';
 import { AdminPage } from './components/AdminPage';
 import { ClaimModal } from './components/ClaimModal';
 import { QuoteModal } from './components/QuoteModal';
@@ -26,6 +40,12 @@ import {
   fetchClaimsAdmin,
   approveClaimAdmin,
   rejectClaimAdmin,
+  bulkImportListingsAdmin,
+  BulkImportRow,
+  BulkImportResult,
+  fetchSubscriptionsAdmin,
+  Subscription,
+  trackEvent,
 } from './lib/api';
 
 const CATEGORIES: ListingCategory[] = [
@@ -34,10 +54,6 @@ const CATEGORIES: ListingCategory[] = [
   'Junk Removal & Hauling',
   'Liquidation & Estate Sales',
   'Content Appraisal & Downsizing'
-];
-
-const STATES = [
-  'All States', 'CA', 'CT', 'FL', 'IL', 'MA', 'NC', 'NY', 'OH', 'OR', 'TX', 'VA', 'WA', 'CO', 'PA'
 ];
 
 export default function App() {
@@ -71,6 +87,7 @@ export default function App() {
   // no local-only fallback since neither used to be stored anywhere at all.
   const [quotes, setQuotes] = useState<QuoteRequest[]>([]);
   const [claims, setClaims] = useState<ClaimRequest[]>([]);
+  const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
 
   // Stripe link state
   const [stripePaymentLink, setStripePaymentLink] = useState<string>(() => {
@@ -112,11 +129,74 @@ export default function App() {
   // Routing - check if we're on the /admin page
   const [isAdminPage, setIsAdminPage] = useState(() => window.location.hash === '#/admin');
 
+  // Which listing (if any) is open, driven by the URL rather than local state - this is
+  // what gives each listing its own real, shareable, crawlable URL instead of a modal that
+  // only exists in memory.
+  const { id: routeListingId } = useParams();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const selectedListing = routeListingId ? listings.find((l) => l.id === routeListingId) || null : null;
+  // Exactly one <h1> per view: the hero is the page's h1 on the homepage, but demotes to
+  // h2 whenever a listing's own name is the h1 (see ListingDetailModal).
+  const HeroHeadingTag = selectedListing ? 'h2' : 'h1';
+
+  // The page behind an open listing: a listing opened from a landing page keeps that page
+  // (passed via router state) underneath it, and closing the listing returns there.
+  const backgroundPath: string = routeListingId ? (location.state as any)?.from || '/' : location.pathname;
+
+  // State / city / service landing pages (/estate-cleanouts/missouri/kansas-city), derived
+  // from the URL so each one is its own real, indexable page.
+  const landing = parseLandingPath(backgroundPath);
+  const landingListings = landing
+    ? listings.filter(
+        (l) =>
+          l.state === landing.stateCode &&
+          (!landing.service.category || l.category === landing.service.category) &&
+          (!landing.citySlug || citySlug(l.city) === landing.citySlug)
+      )
+    : [];
+  const landingCityName = landing?.citySlug ? landingListings[0]?.city ?? null : null;
+
+  // One source of truth for the document title/description, so the listing page and the
+  // landing page behind it never fight over it.
+  const pageMeta = selectedListing
+    ? {
+        title: `${selectedListing.name} - ${selectedListing.category} in ${selectedListing.city}, ${selectedListing.state} | ClearAnEstate.com`,
+        // Lead with the business name so two unclaimed listings sharing the same category/city
+        // (whose tagline is a generic "{category} serving {city}, {state}" placeholder) never
+        // end up with byte-identical meta descriptions.
+        description: `${selectedListing.name} - ${selectedListing.tagline || selectedListing.description || `${selectedListing.category} services in ${selectedListing.city}, ${selectedListing.state}`}`.slice(0, 160),
+        path: listingPath(selectedListing),
+      }
+    : landing && landingListings.length > 0
+    ? {
+        title: `${landingTitle(landing, landingCityName)} | ClearAnEstate.com`,
+        description: landingDescription(landing, landingCityName, landingListings.length),
+        path: backgroundPath.toLowerCase().replace(/\/+$/, ''),
+      }
+    : null;
+  useDocumentMeta(pageMeta?.title ?? null, pageMeta?.description ?? null, pageMeta?.path ?? null);
+
+  // The same place (state, or state + city) under a different service.
+  const landingPathFor = (serviceSlug: string) => {
+    if (!landing) return '/';
+    if (!landing.citySlug) return statePath(landing.stateCode, serviceSlug);
+    return `/${serviceSlug}/${stateSlug(landing.stateCode)}/${landing.citySlug}`;
+  };
+
+  // Count a page view on every route change (but not inside the admin portal).
+  useEffect(() => {
+    if (!isAdminPage) trackEvent('page_view');
+  }, [location.pathname, isAdminPage]);
+
+  // Moving between landing pages via internal links should start at the top of the new page.
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [backgroundPath]);
+
   // Modal States
-  const [selectedListing, setSelectedListing] = useState<Listing | null>(null);
   const [isSubmitOpen, setIsSubmitOpen] = useState(false);
   const [isFeaturedOpen, setIsFeaturedOpen] = useState(false);
-  const [isAdminOpen, setIsAdminOpen] = useState(false);
   const [claimingListing, setClaimingListing] = useState<Listing | null>(null);
   const [quoteListing, setQuoteListing] = useState<Listing | null>(null);
   const [featuredListingId, setFeaturedListingId] = useState<string | null>(null);
@@ -202,6 +282,10 @@ export default function App() {
       fetchClaimsAdmin(adminPassword)
         .then(setClaims)
         .catch((e) => console.warn('Failed to load claim requests from API', e));
+
+      fetchSubscriptionsAdmin(adminPassword)
+        .then(setSubscriptions)
+        .catch((e) => console.warn('Failed to load subscriptions from API', e));
     }
   }, [dbConfigured, adminPassword]);
 
@@ -370,6 +454,19 @@ export default function App() {
     setListings((prev) => prev.filter((l) => l.id !== listingId));
   };
 
+  // Bulk Import Real Businesses (admin-researched, not self-submitted - inserted as
+  // unclaimed/unverified rather than stamped with fake insured/bonded/rating values)
+  const handleBulkImport = async (rows: BulkImportRow[]): Promise<BulkImportResult> => {
+    if (!dbConfigured || !adminPassword) {
+      throw new Error('Bulk import requires a configured database and admin login.');
+    }
+    const result = await bulkImportListingsAdmin(rows, adminPassword);
+    if (result.imported.length > 0) {
+      fetchLiveListings().then(setListings).catch(() => {});
+    }
+    return result;
+  };
+
   // Confirm Claiming
   const handleConfirmClaim = (listingId: string) => {
     setListings((prev) =>
@@ -377,13 +474,9 @@ export default function App() {
     );
   };
 
-  // Reset Data to 18 Initial Seed Listings
-  const handleResetData = () => {
-    setListings(INITIAL_LISTINGS);
-    setPending(INITIAL_PENDING);
-    setStripePaymentLink(DEFAULT_STRIPE_PAYMENT_LINK);
-    setBookmarks([]);
-  };
+  // State filter options - derived from whatever states actually have listings, rather
+  // than a fixed list, so newly imported/approved listings in a new state show up here too.
+  const availableStates = ['All States', ...Array.from(new Set(listings.map((l) => l.state))).sort()];
 
   // Filter & Search Logic
   const filteredListings = listings.filter((item) => {
@@ -391,12 +484,18 @@ export default function App() {
       return false;
     }
 
-    if (filters.category !== 'All' && item.category !== filters.category) {
-      return false;
-    }
+    // On a landing page the URL decides state/city/service; the dropdown and pills navigate
+    // between landing pages instead of filtering.
+    if (landing) {
+      if (!landingListings.includes(item)) return false;
+    } else {
+      if (filters.category !== 'All' && item.category !== filters.category) {
+        return false;
+      }
 
-    if (filters.state !== 'All States' && item.state !== filters.state) {
-      return false;
+      if (filters.state !== 'All States' && item.state !== filters.state) {
+        return false;
+      }
     }
 
     if (filters.featuredOnly && !item.featured) {
@@ -444,6 +543,7 @@ export default function App() {
         pending={pending}
         quotes={quotes}
         claims={claims}
+        subscriptions={subscriptions}
         onApproveClaim={handleApproveClaim}
         onRejectClaim={handleRejectClaim}
         onApprovePending={handleApprovePending}
@@ -451,7 +551,9 @@ export default function App() {
         onToggleFeatured={handleToggleFeatured}
         onDeleteListing={handleDeleteListing}
         onResetData={resetAllData}
+        onBulkImport={handleBulkImport}
         dbConfigured={dbConfigured}
+        adminPassword={adminPassword}
         requiresLogin={!adminPassword}
         onLoginSuccess={handleAdminLoginSuccess}
         onLogout={handleAdminLogout}
@@ -488,18 +590,48 @@ export default function App() {
         {/* Hero Section styled as Estate Sale Price Tag Theme */}
         <section className="bg-gradient-to-b from-amber-100/70 via-amber-50/50 to-stone-100 dark:from-stone-900 dark:via-stone-900/60 dark:to-stone-950 border-b border-stone-200 dark:border-stone-800 py-10 px-4 sm:px-6 lg:px-8">
           <div className="max-w-5xl mx-auto text-center space-y-4">
-            <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-serif font-bold bg-amber-200 dark:bg-amber-950/80 text-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-2xs">
-              <Tag className="w-3.5 h-3.5 text-amber-700" />
-              18+ Operating Estate Cleanouts & Senior Downsizing Services Listed
-            </div>
+            {landing ? (
+              <>
+                <nav aria-label="Breadcrumb" className="flex flex-wrap items-center justify-center gap-1.5 text-xs font-semibold text-stone-500">
+                  <Link to="/" className="hover:text-amber-700">Home</Link>
+                  <span>›</span>
+                  <Link to={statePath(landing.stateCode, landing.service.slug)} className="hover:text-amber-700">
+                    {stateName(landing.stateCode)}
+                  </Link>
+                  {landingCityName && (
+                    <>
+                      <span>›</span>
+                      <span className="text-stone-700 dark:text-stone-300">{landingCityName}</span>
+                    </>
+                  )}
+                </nav>
 
-            <h1 className="text-3xl sm:text-5xl font-serif font-black tracking-tight text-stone-900 dark:text-stone-50 leading-tight">
-              Find Trusted <span className="text-amber-700 dark:text-amber-500">Estate Cleanout</span> Pros
-            </h1>
+                <HeroHeadingTag className="text-3xl sm:text-5xl font-serif font-black tracking-tight text-stone-900 dark:text-stone-50 leading-tight">
+                  {landingListings.length > 0 ? landingTitle(landing, landingCityName) : `${landing.service.plural} in ${stateName(landing.stateCode)}`}
+                </HeroHeadingTag>
 
-            <p className="text-sm sm:text-base text-stone-600 dark:text-stone-300 max-w-2xl mx-auto font-serif">
-              Connecting probate executors, attorneys, and families with insured estate sale liquidators, senior move managers, and whole-house cleanout services.
-            </p>
+                <p className="text-sm sm:text-base text-stone-600 dark:text-stone-300 max-w-2xl mx-auto font-serif">
+                  {landingListings.length > 0
+                    ? `${landingListings.length} local ${landingListings.length === 1 ? 'company' : 'companies'} listed. Compare services, then call, visit their website, or request a free estimate. Free to use, no sign-up.`
+                    : 'We don’t have listings for this area yet. Browse nearby areas below, or add your business for free.'}
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="inline-flex items-center gap-2 px-3.5 py-1 rounded-full text-xs font-serif font-bold bg-amber-200 dark:bg-amber-950/80 text-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800 shadow-2xs">
+                  <Tag className="w-3.5 h-3.5 text-amber-700" />
+                  {listings.length}+ Estate Cleanout & Senior Downsizing Services Listed
+                </div>
+
+                <HeroHeadingTag className="text-3xl sm:text-5xl font-serif font-black tracking-tight text-stone-900 dark:text-stone-50 leading-tight">
+                  Find Trusted <span className="text-amber-700 dark:text-amber-500">Estate Cleanout</span> Pros
+                </HeroHeadingTag>
+
+                <p className="text-sm sm:text-base text-stone-600 dark:text-stone-300 max-w-2xl mx-auto font-serif">
+                  Connecting probate executors, attorneys, and families with insured estate sale liquidators, senior move managers, and whole-house cleanout services.
+                </p>
+              </>
+            )}
 
             {/* Main Search & Filter Control Bar */}
             <div className="mt-6 bg-white dark:bg-stone-900 p-2.5 sm:p-3 rounded-2xl shadow-xl border-2 border-stone-300 dark:border-stone-700 max-w-3xl mx-auto flex flex-col sm:flex-row items-center gap-2">
@@ -518,19 +650,28 @@ export default function App() {
               {/* State Filter Dropdown */}
               <div className="w-full sm:w-44">
                 <select
-                  value={filters.state}
-                  onChange={(e) => setFilters({ ...filters, state: e.target.value })}
+                  value={landing ? landing.stateCode : filters.state}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    if (value === 'All States') {
+                      setFilters({ ...filters, state: value });
+                      if (landing) navigate('/');
+                    } else {
+                      // Picking a state opens that state's own page.
+                      navigate(statePath(value, landing?.service.slug));
+                    }
+                  }}
                   className="w-full py-2.5 px-3 rounded-xl text-xs sm:text-sm bg-stone-50 dark:bg-stone-950 border border-stone-200 dark:border-stone-800 focus:ring-2 focus:ring-amber-500 outline-hidden font-bold"
                   id="main-state-select"
                 >
-                  {STATES.map((st) => (
+                  {availableStates.map((st) => (
                     <option key={st} value={st}>{st}</option>
                   ))}
                 </select>
               </div>
 
               {/* Reset Search Button if filtering */}
-              {(filters.searchQuery || filters.category !== 'All' || filters.state !== 'All States' || filters.featuredOnly || showFavoritesOnly) && (
+              {(filters.searchQuery || (!landing && (filters.category !== 'All' || filters.state !== 'All States')) || filters.featuredOnly || showFavoritesOnly) && (
                 <button
                   onClick={() => {
                     setFilters({
@@ -560,9 +701,9 @@ export default function App() {
             {/* Category Pills */}
             <div className="flex flex-wrap items-center gap-2 overflow-x-auto pb-1 max-w-full">
               <button
-                onClick={() => setFilters({ ...filters, category: 'All' })}
+                onClick={() => (landing ? navigate(landingPathFor(ALL_SERVICES_SLUG)) : setFilters({ ...filters, category: 'All' }))}
                 className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
-                  filters.category === 'All'
+                  (landing ? !landing.service.category : filters.category === 'All')
                     ? 'bg-amber-600 text-white shadow-xs'
                     : 'bg-stone-200/80 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-amber-100'
                 }`}
@@ -574,9 +715,11 @@ export default function App() {
               {CATEGORIES.map((cat) => (
                 <button
                   key={cat}
-                  onClick={() => setFilters({ ...filters, category: cat })}
+                  onClick={() =>
+                    landing ? navigate(landingPathFor(serviceForCategory(cat).slug)) : setFilters({ ...filters, category: cat })
+                  }
                   className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all whitespace-nowrap ${
-                    filters.category === cat
+                    (landing ? landing.service.category === cat : filters.category === cat)
                       ? 'bg-amber-600 text-white shadow-xs'
                       : 'bg-stone-200/80 dark:bg-stone-800 text-stone-700 dark:text-stone-300 hover:bg-amber-100'
                   }`}
@@ -663,7 +806,7 @@ export default function App() {
                 <PriceTagCard
                   key={listing.id}
                   listing={listing}
-                  onSelect={(item) => setSelectedListing(item)}
+                  onSelect={(item) => navigate(listingPath(item), { state: { from: backgroundPath } })}
                   onClaim={(item) => setClaimingListing(item)}
                   isBookmarked={bookmarks.includes(listing.id)}
                   onToggleBookmark={toggleBookmark}
@@ -672,22 +815,24 @@ export default function App() {
             </div>
           )}
         </main>
+
+        <LocationLinks listings={listings} landing={landing} cityName={landingCityName} />
       </div>
 
       {/* Modals Container */}
       <ListingDetailModal
         listing={selectedListing}
-        onClose={() => setSelectedListing(null)}
+        onClose={() => navigate(backgroundPath)}
         onClaim={(item) => {
-          setSelectedListing(null);
+          navigate(backgroundPath);
           setClaimingListing(item);
         }}
         onRequestQuote={(item) => {
-          setSelectedListing(null);
+          navigate(backgroundPath);
           setQuoteListing(item);
         }}
         onGetFeatured={(item) => {
-          setSelectedListing(null);
+          navigate(backgroundPath);
           setFeaturedListingId(item.id);
           setIsFeaturedOpen(true);
         }}
@@ -709,26 +854,6 @@ export default function App() {
         onUpdateStripeLink={(newLink) => setStripePaymentLink(newLink)}
         listings={listings}
         preselectedListingId={featuredListingId}
-      />
-
-      <AdminModal
-        isOpen={isAdminOpen}
-        onClose={() => setIsAdminOpen(false)}
-        listings={listings}
-        pending={pending}
-        quotes={quotes}
-        claims={claims}
-        onApproveClaim={handleApproveClaim}
-        onRejectClaim={handleRejectClaim}
-        onApprovePending={handleApprovePending}
-        onRejectPending={handleRejectPending}
-        onToggleFeatured={handleToggleFeatured}
-        onDeleteListing={handleDeleteListing}
-        onResetData={handleResetData}
-        dbConfigured={dbConfigured}
-        requiresLogin={dbConfigured && !adminPassword}
-        onLoginSuccess={handleAdminLoginSuccess}
-        onLogout={handleAdminLogout}
       />
 
       <ClaimModal
