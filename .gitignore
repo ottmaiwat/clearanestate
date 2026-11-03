@@ -1,6 +1,7 @@
 node_modules/
 build/
-dist/
+# dist/ is committed on purpose: the server deploys by pulling from GitHub (cPanel Git
+# Version Control) and doesn't build, so every built file has to be in the repo.
 coverage/
 .DS_Store
 *.log
