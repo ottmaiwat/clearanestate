@@ -1842,7 +1842,16 @@ async function startServer() {
   } else {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath, { index: false }));
-    const indexHtml = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+    // Google Analytics: the Measurement ID comes from the GA_MEASUREMENT_ID environment
+    // variable (cPanel), so it can be set or changed without a code update. The page reads
+    // it from window.GA_MEASUREMENT_ID (see src/lib/analytics.ts). Only a well-formed ID is
+    // ever written into the page.
+    const gaId = (process.env.GA_MEASUREMENT_ID || '').trim();
+    const gaSnippet = /^G-[A-Z0-9]{4,20}$/.test(gaId) ? `<script>window.GA_MEASUREMENT_ID="${gaId}";</script>\n  </head>` : null;
+    const indexHtml = (() => {
+      const html = fs.readFileSync(path.join(distPath, 'index.html'), 'utf8');
+      return gaSnippet ? html.replace('</head>', gaSnippet) : html;
+    })();
     app.get('*', async (req, res) => {
       const meta = await pageMeta(req.path).catch((err) => {
         console.error('Error building page meta:', err);

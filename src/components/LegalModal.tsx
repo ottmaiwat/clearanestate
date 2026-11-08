@@ -66,7 +66,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
         <div className="p-6 space-y-4 max-h-[70vh] overflow-y-auto text-xs sm:text-sm leading-relaxed">
           {activeTab === 'privacy' ? (
             <div className="space-y-4">
-              <p className="text-stone-500 dark:text-stone-400">Last updated: 2026-08-05</p>
+              <p className="text-stone-500 dark:text-stone-400">Last updated: 2026-11-08</p>
 
               <p className="text-xs italic">
                 ClearAnEstate.com (the "Directory") is operated by Ottster LLC ("we," "us," "our"). This policy explains what we collect, how we use it, and your rights regarding it.
@@ -89,14 +89,18 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
               <section>
                 <h3 className="font-bold text-sm mb-1">Who We Share Information With</h3>
                 <p>
-                  We share estimate request details with the specific business you requested a quote from. We use Stripe to process Featured Listing subscription payments — Stripe's own privacy policy governs how they handle payment information; we never see or store your card details ourselves. We do not sell your personal information to third parties.
+                  We share estimate request details with the specific business you requested a quote from. We use Stripe to process Featured Listing subscription payments — Stripe's own privacy policy governs how they handle payment information; we never see or store your card details ourselves. We use Google Analytics for site statistics, as described under Cookies and Tracking below. We do not sell your personal information to third parties.
                 </p>
               </section>
 
               <section>
                 <h3 className="font-bold text-sm mb-1">Cookies and Tracking</h3>
                 <p>
-                  We do not use advertising or tracking cookies, and we don't use third-party analytics. To show businesses how much attention their listing gets, our own server counts page views and clicks on a listing's call and website buttons. For each event we record the page, the listing, the time, and a short code generated from your IP address and browser type that changes every day. We never store your IP address itself, and the code can't be used to identify you or follow you from one day to the next.
+                  We do not use advertising cookies. To show businesses how much attention their listing gets, our own server counts page views and clicks on a listing's call, website and directions buttons. For each event we record the page, the listing, the time, and a short code generated from your IP address and browser type that changes every day. We never store your IP address itself, and that code can't be used to identify you or follow you from one day to the next.
+                </p>
+                <p className="mt-2">
+                  We also use Google Analytics to understand how visitors find and use the Directory, such as which pages are visited, how people arrived (for example from a search engine), and the general type of device and approximate location (city or country) used. Google Analytics sets cookies in your browser and processes this information on our behalf under Google&rsquo;s own privacy policy; we use it only for site statistics, not advertising. You can block these cookies in your browser settings, or opt out of Google Analytics on all websites with Google&rsquo;s browser add-on at{' '}
+                  <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noopener noreferrer" className="underline">tools.google.com/dlpage/gaoptout</a>.
                 </p>
               </section>
 
@@ -135,7 +139,7 @@ export const LegalModal: React.FC<LegalModalProps> = ({ isOpen, onClose, initial
             </div>
           ) : (
             <div className="space-y-4">
-              <p className="text-stone-500 dark:text-stone-400">Last updated: 2026-08-05</p>
+              <p className="text-stone-500 dark:text-stone-400">Last updated: 2026-11-08</p>
 
               <p className="text-xs italic">
                 ClearAnEstate.com (the "Directory") is operated by Ottster LLC ("we," "us," "our").

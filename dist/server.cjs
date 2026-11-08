@@ -2366,7 +2366,13 @@ async function startServer() {
   } else {
     const distPath = import_path2.default.join(process.cwd(), "dist");
     app.use(import_express.default.static(distPath, { index: false }));
-    const indexHtml = import_fs2.default.readFileSync(import_path2.default.join(distPath, "index.html"), "utf8");
+    const gaId = (process.env.GA_MEASUREMENT_ID || "").trim();
+    const gaSnippet = /^G-[A-Z0-9]{4,20}$/.test(gaId) ? `<script>window.GA_MEASUREMENT_ID="${gaId}";</script>
+  </head>` : null;
+    const indexHtml = (() => {
+      const html = import_fs2.default.readFileSync(import_path2.default.join(distPath, "index.html"), "utf8");
+      return gaSnippet ? html.replace("</head>", gaSnippet) : html;
+    })();
     app.get("*", async (req, res) => {
       const meta = await pageMeta(req.path).catch((err) => {
         console.error("Error building page meta:", err);

@@ -1,4 +1,5 @@
 import { Listing, PendingSubmission, QuoteRequest, ClaimRequest } from '../types';
+import { analyticsEvent } from './analytics';
 
 async function parseJsonOrThrow(res: Response) {
   const data = await res.json().catch(() => ({}));
@@ -128,7 +129,9 @@ export async function submitQuoteRequest(payload: QuoteRequestPayload): Promise<
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return parseJsonOrThrow(res);
+  const result = await parseJsonOrThrow(res);
+  analyticsEvent('contact_estimate_request', payload.listingId ? { listing_id: payload.listingId } : undefined);
+  return result;
 }
 
 export async function fetchQuoteRequestsAdmin(password: string): Promise<QuoteRequest[]> {
@@ -219,6 +222,11 @@ export type TrackEventType = 'page_view' | 'listing_view' | 'call' | 'website' |
 // Fire-and-forget traffic event. sendBeacon survives the page unloading (a tel: link or a
 // website click often navigates away immediately), and falls back to a keepalive fetch.
 export function trackEvent(type: TrackEventType, listingId?: string): void {
+  // Mirror listing views and contact clicks into Google Analytics (if it's set up), so GA
+  // can show which traffic sources lead to calls. GA counts page views itself.
+  if (type !== 'page_view') {
+    analyticsEvent(type === 'listing_view' ? 'listing_view' : `contact_${type}`, listingId ? { listing_id: listingId } : undefined);
+  }
   try {
     const body = JSON.stringify({ type, listingId, path: window.location.pathname });
     const blob = new Blob([body], { type: 'application/json' });
