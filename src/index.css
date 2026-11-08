@@ -1,5 +1,5 @@
 @import "tailwindcss";
 
-/* dark: styles follow the .dark class on <html> (set from the visitor's saved choice or
-   their system setting; see src/lib/theme.ts and the inline script in index.html). */
+/* dark: styles follow the .dark class on <html>, set only when the visitor has chosen
+   dark mode (the site is light by default; see src/lib/theme.ts and index.html). */
 @custom-variant dark (&:where(.dark, .dark *));
